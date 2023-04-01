@@ -4,7 +4,7 @@
 #include <signal.h>
 #include <stdio.h>
 #define hello 548
-#define buf_len 10
+#define buf_len 10  //通过修改buf_len常数来改变buffer的大小
 
 int main()
 {
