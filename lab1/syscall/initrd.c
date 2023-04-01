@@ -12,7 +12,7 @@ int main()
     int result = syscall(hello, buf, buf_len);
     if(result == 0)
     {
-        printf("%s\n", buf);
+        printf("%s", buf);
     }
     else if(result == -1)
     {
