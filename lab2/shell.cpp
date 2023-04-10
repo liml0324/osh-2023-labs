@@ -57,12 +57,17 @@ int main() {
     }
 
     if (args[0] == "pwd") {
-      std::cout << "To be done!\n";
+      char buf[256];
+      if(getcwd(buf, sizeof(buf)) == NULL)
+        std::cout << "Error\n";
+      else
+        std::cout << buf << '\n';
       continue;
     }
 
     if (args[0] == "cd") {
-      std::cout << "To be done!\n";
+      if(chdir(args[1].c_str()) != 0)
+        std::cout << "Error\n";
       continue;
     }
 
