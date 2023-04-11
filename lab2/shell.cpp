@@ -46,10 +46,14 @@ int main() {
   while (true) {
     if(pos == cmdVector.size())
     {
-      close(fd[0]);
-      if(pipe(fd+1) != 0)
-        exit(-1);
-      fd[0] = 0;
+      if(cmdVector.size() > 1)//需要建立管道
+      {
+        close(fd[0]);
+        if(pipe(fd+1) != 0)
+          exit(-1);
+        fd[0] = 0;
+      }
+      
       pos = 0;
       // 打印提示符
       std::cout << "# ";
@@ -59,10 +63,11 @@ int main() {
       cmdVector = split(cmdline, "|");
     }
     
+    //裁一下两端空格
+    cmdVector[pos].erase(0,cmdVector[pos].find_first_not_of(" "));
+    cmdVector[pos].erase(cmdVector[pos].find_last_not_of(" ") + 1);
     // 按空格分割命令为单词
-    //printf("%s\n", cmdVector[pos]);
-    std::vector<std::string> args = split(cmdVector[pos], " ");//这里多得到了空字符串，需要改
-    //std::cout << args[0] << std::endl;
+    std::vector<std::string> args = split(cmdVector[pos], " ");
     // 退出
     if (args[0] == "exit") {
       if (args.size() <= 1) {
@@ -124,7 +129,7 @@ int main() {
           std::cout << "cd Error\n";
       }
       if(pos != 0)//不是第一条指令，关闭上一条管道读口
-      close(fd[0]); 
+        close(fd[0]); 
       fd[0] = fd[1]; 
       if(pos != cmdVector.size()-1)//不是最后一条指令，关闭这一条管道的写口
         close(fd[2]);
