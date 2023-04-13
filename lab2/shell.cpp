@@ -14,8 +14,15 @@
 #include <sys/wait.h>
 
 #include <stdio.h>
+//open
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
+void setPipe(int pos, int *fd, int size);//处理管道
 std::vector<std::string> split(std::string s, const std::string &delimiter);
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type);
+int strlen(char * str, int size);
 
 int main() {
   // 不同步 iostream 和 cstdio 的 buffer
@@ -63,11 +70,13 @@ int main() {
       cmdVector = split(cmdline, "|");
     }
     
-    //裁一下两端空格
-    cmdVector[pos].erase(0,cmdVector[pos].find_first_not_of(" "));
-    cmdVector[pos].erase(cmdVector[pos].find_last_not_of(" ") + 1);
-    // 按空格分割命令为单词
-    std::vector<std::string> args = split(cmdVector[pos], " ");
+    std::vector<std::string> args;
+    std::string path;
+    int type;
+    divideCmd(cmdVector[pos], args, path, type);
+    //std::cout << args[args.size()-1] << '\n' << path << std::endl;
+
+
     // 退出
     if (args[0] == "exit") {
       if (args.size() <= 1) {
@@ -92,25 +101,31 @@ int main() {
       char buf[256];
       if(getcwd(buf, sizeof(buf)) == NULL)
         std::cout << "pwd Error\n";
-      else if(pos != cmdVector.size()-1)//不是最后一条命令
+      else if(pos != cmdVector.size()-1)//处理管道：不是最后一条命令
       {
         write(fd[2], buf, sizeof(buf));
       }
-      else
-        std::cout << buf << '\n';
-      if(pos != 0)//不是第一条指令，关闭上一条管道读口
-      close(fd[0]); 
-      fd[0] = fd[1]; 
-      if(pos != cmdVector.size()-1)//不是最后一条指令，关闭这一条管道的写口
-        close(fd[2]);
-      if(pos < cmdVector.size()-2)//倒数第二条之前的指令还需新建管道
+      else if(type > 0)
       {
-        if(pipe(fd+1) != 0)
+        int dpo;
+        if(type == 1)//>
         {
-          std::cout << "pipe Error" << std::endl;
-          exit(-1);
+          dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
+        }
+        else//>>
+        {
+          dpo = open(path.c_str(), O_APPEND | O_WRONLY);
+        }
+        if(dpo < 0) 
+          std::cout << "open Error\n";
+        else
+        {
+          write(dpo, buf, strlen(buf, sizeof(buf)));
         }
       }
+      else
+        std::cout << buf << '\n';
+      setPipe(pos, fd, cmdVector.size());
       pos++;
       continue;
     }
@@ -128,19 +143,8 @@ int main() {
         if(chdir(args[1].c_str()) != 0)
           std::cout << "cd Error\n";
       }
-      if(pos != 0)//不是第一条指令，关闭上一条管道读口
-        close(fd[0]); 
-      fd[0] = fd[1]; 
-      if(pos != cmdVector.size()-1)//不是最后一条指令，关闭这一条管道的写口
-        close(fd[2]);
-      if(pos < cmdVector.size()-2)//倒数第二条之前的指令还需新建管道
-      {
-        if(pipe(fd+1) != 0)
-        {
-          std::cout << "pipe Error" << std::endl;
-          exit(-1);
-        }
-      }
+
+      setPipe(pos, fd, cmdVector.size());
       pos++;
       continue;
     }
@@ -160,6 +164,42 @@ int main() {
       // 这里只有子进程才会进入
       // execvp 会完全更换子进程接下来的代码，所以正常情况下 execvp 之后这里的代码就没意义了
       // 如果 execvp 之后的代码被运行了，那就是 execvp 出问题了
+      if(type >= 0)//需要重定向
+      {
+        if(type == 0)//重定向输入
+        {
+          int dpin = open(path.c_str(),  O_RDONLY);
+          if(dpin < 0)  
+            std::cout << "Redirection Error\n";
+          else
+          {
+            dup2(dpin, 0);
+            close(dpin);
+          }
+        }
+        else if(type == 1)//>
+        {
+          int dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
+          if(dpo < 0)  
+            std::cout << "Redirection Error\n";
+          else
+          {
+            dup2(dpo, 1);
+            close(dpo);
+          }
+        }
+        else//>>
+        {
+          int dpo = open(path.c_str(), O_APPEND | O_WRONLY);
+          if(dpo < 0)  
+            std::cout << "Redirection Error\n";
+          else
+          {
+            dup2(dpo, 1);
+            close(dpo);
+          }
+        }
+      }
       if(pos != 0)//处理管道：不是第一条指令
       {
         dup2(fd[0], 0);
@@ -182,12 +222,19 @@ int main() {
       std::cout << "wait failed";
     }
     
-    if(pos != 0)//不是第一条指令，关闭上一条管道读口
+    setPipe(pos, fd, cmdVector.size());
+    pos++;
+  }
+}
+
+void setPipe(int pos, int *fd, int size)
+{
+  if(pos != 0)//不是第一条指令，关闭上一条管道读口
       close(fd[0]); 
     fd[0] = fd[1]; 
-    if(pos != cmdVector.size()-1)//不是最后一条指令，关闭这一条管道的写口
+    if(pos != size-1)//不是最后一条指令，关闭这一条管道的写口
       close(fd[2]);
-    if(pos < cmdVector.size()-2)//倒数第二条之前的指令还需新建管道
+    if(pos < size-2)//倒数第二条之前的指令还需新建管道
     {
       if(pipe(fd+1) != 0)
       {
@@ -195,8 +242,7 @@ int main() {
         exit(-1);
       }
     }
-    pos++;
-  }
+    return;
 }
 
 // 经典的 cpp string split 实现
@@ -212,4 +258,51 @@ std::vector<std::string> split(std::string s, const std::string &delimiter) {
   }
   res.push_back(s);
   return res;
+}
+
+int getLast(std::string cmd, int &type)
+{
+  auto a = cmd.find_last_of("<>");
+  if(a == -1) type = -1;
+  else if(cmd[a] == '<')  type = 0;//<
+  else if(cmd[a] == '>')  
+  {
+    if(a && cmd[a-1] == '>')  type = 2;//>>
+    else  type = 1;//>
+  }
+  return a;
+}
+
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type)
+{
+  auto firstPos = cmd.find_first_of("<>");
+  std::string tempStr;
+  if(firstPos >= 0 && firstPos < cmd.length())
+  {
+    tempStr = cmd.substr(0, firstPos);//截取除掉重定向部分之后的命令
+    auto lastPos = getLast(cmd, type);
+    path = cmd.substr(lastPos + 1, cmd.length() - lastPos - 1);
+  }
+  else
+  {
+    tempStr = cmd;
+    type = -1;
+    path = "";
+  }
+  //裁一下两端空格
+  path.erase(0,path.find_first_not_of(" "));
+  path.erase(path.find_last_not_of(" ") + 1);
+  //裁一下两端空格
+  tempStr.erase(0,tempStr.find_first_not_of(" "));
+  tempStr.erase(tempStr.find_last_not_of(" ") + 1);
+  args = split(tempStr, " ");
+  return;
+}
+
+int strlen(char * str, int size)
+{
+  int i = 0;
+  while(str[i] != 0 && i < size)
+    i++;
+  return i;
 }
