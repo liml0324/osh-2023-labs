@@ -19,10 +19,16 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+int rst = 0;
+
+//在子进程和父进程间通信的管道
+int sig[2];
+
 void setPipe(int pos, int *fd, int size);//处理管道
 std::vector<std::string> split(std::string s, const std::string &delimiter);
 void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type);
 int strlen(char * str, int size);
+void shellHandleSIGINT(int a);
 
 int main() {
   // 不同步 iostream 和 cstdio 的 buffer
@@ -34,14 +40,19 @@ int main() {
   //存储按"|"分割的命令
   std::vector<std::string> cmdVector;
 
+  //设置信号处理的结构体
+  struct sigaction shellSIGINT, childSIGINT;
+  shellSIGINT.sa_flags = 0;
+  shellSIGINT.sa_handler = shellHandleSIGINT;
+  
+  //处理Ctrl+C
+  sigaction(SIGINT, &shellSIGINT, &childSIGINT);
+  signal(SIGTTOU, SIG_IGN);
+
   //存储当前执行到哪条指令
   int pos = 0;
-
-  //设置管道
+  //保存管道的文件描述符
   int fd[3];
-  if(pipe(fd+1) != 0)
-    exit(-1);
-  fd[0] = 0;
 
   // 打印提示符
   std::cout << "# ";
@@ -50,24 +61,38 @@ int main() {
   //分割
   cmdVector = split(cmdline, "|");
 
+  if(cmdVector.size() > 1)//需要建立管道
+  {
+    if(pipe(fd+1) != 0)
+      exit(-1);
+    fd[0] = 0;
+    //std::cout << "Make pipe" << std::endl;
+  }
+
   while (true) {
-    if(pos == cmdVector.size())
+    //tcsetpgrp(0, getpgrp());
+    if(pos == cmdVector.size() || rst)
     {
-      if(cmdVector.size() > 1)//需要建立管道
-      {
+      if(cmdVector.size() > 1)//把上一次的管道关了
         close(fd[0]);
-        if(pipe(fd+1) != 0)
-          exit(-1);
-        fd[0] = 0;
-      }
-      
-      pos = 0;
+      pos = 0; rst = 0;
       // 打印提示符
       std::cout << "# ";
       // 读入一行。std::getline 结果不包含换行符。
       std::getline(std::cin, cmdline);
+      //std::cout << "getline" << std::endl;
       //分割
       cmdVector = split(cmdline, "|");
+      //std::cout << "split" << std::endl;
+
+      if(cmdVector.size() > 1)//需要建立管道
+      {
+        if(pipe(fd+1) != 0)
+          exit(-1);
+        fd[0] = 0;
+        //std::cout << "Make pipe" << std::endl;
+      }
+      //std::cout << "pipe" << std::endl;
     }
     
     std::vector<std::string> args;
@@ -76,6 +101,12 @@ int main() {
     divideCmd(cmdVector[pos], args, path, type);
     //std::cout << args[args.size()-1] << '\n' << path << std::endl;
 
+    //跳过
+    if(args[0] == "")
+    {
+      pos++;
+      continue;
+    }
 
     // 退出
     if (args[0] == "exit") {
@@ -164,6 +195,10 @@ int main() {
       // 这里只有子进程才会进入
       // execvp 会完全更换子进程接下来的代码，所以正常情况下 execvp 之后这里的代码就没意义了
       // 如果 execvp 之后的代码被运行了，那就是 execvp 出问题了
+      sigaction(SIGINT, &childSIGINT, NULL);
+      signal(SIGTTOU, SIG_DFL);
+      //std::cout << "Child:" << getpgrp() << std::endl;
+      //std::cout << "Child pid:" << getpid() << std::endl;
       if(type >= 0)//需要重定向
       {
         if(type == 0)//重定向输入
@@ -217,12 +252,29 @@ int main() {
     }
 
     // 这里只有父进程（原进程）才会进入
-    int ret = waitpid(pid, NULL, 0);
+    setpgid(pid, pid);
+    tcsetpgrp(0, pid);
+    //std::cout << "Father:" << getpgrp() << std::endl;
+    int status;
+    int ret = waitpid(pid, &status, 0);
+    // int ret;
+    // wait(&ret);
+    //std::cout << "Wait end" << std::endl;
+    tcsetpgrp(0, getpgrp());
     if (ret < 0) {
       std::cout << "wait failed";
     }
+    else if(WIFSIGNALED(status))//子进程被信号终止，结束语句运行并重新输入
+    {
+      rst = 1;
+      std::cout << std::endl;
+      //std::cout << status << std::endl;
+    }
     
+
     setPipe(pos, fd, cmdVector.size());
+    //std::cout << "set pipe end" << std::endl;
+    //getchar();
     pos++;
   }
 }
@@ -230,19 +282,27 @@ int main() {
 void setPipe(int pos, int *fd, int size)
 {
   if(pos != 0)//不是第一条指令，关闭上一条管道读口
-      close(fd[0]); 
-    fd[0] = fd[1]; 
-    if(pos != size-1)//不是最后一条指令，关闭这一条管道的写口
-      close(fd[2]);
-    if(pos < size-2)//倒数第二条之前的指令还需新建管道
+  {
+    close(fd[0]); 
+    //std::cout << "close0" << std::endl;
+  }
+    
+  fd[0] = fd[1]; 
+  if(pos != size-1)//不是最后一条指令，关闭这一条管道的写口
+  {
+    close(fd[2]);
+    //std::cout << "close2" << std::endl;
+  }
+    
+  if(pos < size-2 && !rst)//倒数第二条之前的指令还需新建管道（除非命令被中止执行）
+  {
+    if(pipe(fd+1) != 0)
     {
-      if(pipe(fd+1) != 0)
-      {
-        std::cout << "pipe Error" << std::endl;
-        exit(-1);
-      }
+      std::cout << "pipe Error" << std::endl;
+      exit(-1);
     }
-    return;
+  }
+  return;
 }
 
 // 经典的 cpp string split 实现
@@ -305,4 +365,14 @@ int strlen(char * str, int size)
   while(str[i] != 0 && i < size)
     i++;
   return i;
+}
+
+void shellHandleSIGINT(int a)
+{
+  //rst = 1;
+  int num = std::cin.rdbuf()->in_avail();
+  std::cin.ignore(num);
+  std::cout << '\n' << "# ";
+  std::cout.flush();
+  //std::cout << "SIGINT" << std::endl;
 }
