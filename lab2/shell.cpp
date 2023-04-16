@@ -20,7 +20,7 @@
 #include <fcntl.h>
 
 std::vector<std::string> split(std::string s, const std::string &delimiter);
-void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type);
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type, int &backstage);
 int strlen(char * str, int size);
 void shellHandleSIGINT(int a);
 void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2]);
@@ -70,14 +70,16 @@ int main() {
     }
     
     std::vector<std::string> args;
-    std::string path;
-    int type;
-    int pgid;
+    std::string path;//重定向路径
+    int type;//重定向类型
+    int pgid = 0;
+    int backstage = 0;//是否在后台执行
     pid_t pid;
+    pid_t wpid = -1;
 
     for(int i = 0; i < cmdVector.size(); i++)
     {
-      divideCmd(cmdVector[i], args, path, type);
+      divideCmd(cmdVector[i], args, path, type, backstage);
       pid = fork();
       if(pid == 0)
       {
@@ -101,7 +103,29 @@ int main() {
           }
           return 0;
         }
-        if(args[0] == "exit")//exit
+
+        if(backstage == 1)//后台执行
+        {
+          umask(0);
+          int fd0 = 0;
+          signal(SIGPIPE, SIG_IGN);
+          setsid();
+          if(fd0 = open("/dev/null", O_RDWR) != -1)
+          {
+            std::cout << fd0 << std::endl;
+            dup2(fd0, STDIN_FILENO);
+            dup2(fd0, STDOUT_FILENO);
+            dup2(fd0, STDERR_FILENO);
+            if(fd0 > STDERR_FILENO)
+            {
+              close(fd0);
+            }
+          }
+          else
+            std::cout << "fd0 error!" << std::endl;
+        }
+
+        if(args[0] == "exit")//exit由父进程处理
         {
           return 0;
         }
@@ -186,15 +210,19 @@ int main() {
       else//父进程
       {
         //kill(pid, SIGSTOP);
-        if(i == 0)
-          pgid = pid;
-        setpgid(pid, pgid);
-        if(i == 0)
+        if(backstage == 0)//不在后台运行才设置进程组
+        {
+          wpid = pid;
+          if(pgid == 0)
+            pgid = pid;
+          setpgid(pid, pgid);
           tcsetpgrp(0, pgid);
+        }
+        
         //kill(pid, SIGCONT);
         
-        if(i == cmdVector.size()-1)
-          tcsetpgrp(0, pid);
+        // if(i == cmdVector.size()-1)
+        //   tcsetpgrp(0, pid);
         
         if(cmdVector.size() > 1)
         {
@@ -222,9 +250,9 @@ int main() {
       }
     }
     
-    int ret;
-    //ret = waitpid(-pgid, NULL, 0);
-    ret = waitpid(pid, NULL, 0);
+    int ret = 0;
+    if(wpid != -1)
+      ret = waitpid(wpid, NULL, 0);//等待管道中最后一个进程结束
     //perror("?");
     if(ret < 0)
       std::cout << "Wait failed" << std::endl;
@@ -261,8 +289,18 @@ int getLast(std::string cmd, int &type)//获得最后一个重定向符号的位
   return a;
 }
 
-void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type)//分割一条命令，返回参数，重定向类型和路径（如果有的话）
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type, int &backstage)//分割一条命令，返回参数，重定向类型和路径（如果有的话）
 {
+  //裁一下两端空格
+  cmd.erase(0,cmd.find_first_not_of(" "));
+  cmd.erase(cmd.find_last_not_of(" ") + 1);
+  if(cmd.size() > 0 && cmd.substr(cmd.size()-1, 1) == "&")
+  {
+    backstage = 1;
+    cmd.erase(cmd.size()-1);
+  }
+  else
+    backstage = 0;
   auto firstPos = cmd.find_first_of("<>");
   std::string tempStr;
   if(firstPos >= 0 && firstPos < cmd.length())
@@ -311,7 +349,9 @@ void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int typ
   char buf[256];
   if(getcwd(buf, sizeof(buf)) == NULL)
     std::cout << "pwd Error\n";
-  else if(cmdVector.size() > 1)//处理管道
+  else
+    std::cout << buf << std::endl;
+  if(cmdVector.size() > 1)//处理管道
   {
     if(pos != 0)//不是第一条命令
     {
@@ -319,31 +359,9 @@ void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int typ
     }
     if(pos != cmdVector.size()-1)//不是最后一条命令
     {
-      write(fd[pos][1], buf, strlen(buf, sizeof(buf)));
-      close(fd[pos][1]);//关闭后一个读口
-    }
-    
-  }
-  else if(type > 0)//重定向
-  {
-    int dpo;
-    if(type == 1)//>
-    {
-      dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
-    }
-    else//>>
-    {
-      dpo = open(path.c_str(), O_APPEND | O_WRONLY);
-    }
-    if(dpo < 0) 
-      std::cout << "open Error\n";
-    else
-    {
-      write(dpo, buf, strlen(buf, sizeof(buf)));
+      close(fd[pos][1]);//关闭后一个写口
     }
   }
-  else
-    std::cout << buf << std::endl;
 }
 
 void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2])
@@ -352,20 +370,14 @@ void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type
   {
     if(pos != 0)//处理管道：不是第一条指令
     {
-      char buf[256];
-      read(fd[pos-1][0], buf, sizeof(buf));//从pipe中读取
       close(fd[pos-1][0]);
-      if(chdir(buf) != 0)
-        std::cout << "cd Error\n";
     }
     if(pos != cmdVector.size()-1)//不是最后一条命令
     {
       close(fd[pos][0]);
     }
   }
-  else
-  {
-    if(chdir(path.c_str()) != 0)
-      std::cout << "cd Error\n";
-  }
+  
+  if(chdir(path.c_str()) != 0)
+    std::cout << "cd Error\n";
 }
