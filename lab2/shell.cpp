@@ -15,7 +15,7 @@
 
 #include <stdio.h>
 //open
-#include <sys/types.h>
+//#include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
@@ -25,6 +25,7 @@ int strlen(char * str, int size);
 void shellHandleSIGINT(int a);
 void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2]);
 void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2]);
+void Wait();
 
 int main() {
   // 不同步 iostream 和 cstdio 的 buffer
@@ -110,9 +111,9 @@ int main() {
           int fd0 = 0;
           signal(SIGPIPE, SIG_IGN);
           setsid();
-          if(fd0 = open("/dev/null", O_RDWR) != -1)
+          if((fd0 = open("/dev/null", O_RDWR)) != -1)
           {
-            std::cout << fd0 << std::endl;
+            //std::cout << fd0 << std::endl;
             dup2(fd0, STDIN_FILENO);
             dup2(fd0, STDOUT_FILENO);
             dup2(fd0, STDERR_FILENO);
@@ -125,6 +126,10 @@ int main() {
             std::cout << "fd0 error!" << std::endl;
         }
 
+        if(args[0] == "wait")//wait由父进程处理
+        {
+          return 0;
+        }
         if(args[0] == "exit")//exit由父进程处理
         {
           return 0;
@@ -210,7 +215,7 @@ int main() {
       else//父进程
       {
         //kill(pid, SIGSTOP);
-        if(backstage == 0)//不在后台运行才设置进程组
+        if(backstage == 0 && args[0] != "exit" && args[0] != "wait")//不在后台运行才设置进程组
         {
           wpid = pid;
           if(pgid == 0)
@@ -230,6 +235,11 @@ int main() {
             close(fd[i-1][0]);
           if(i != cmdVector.size()-1)
             close(fd[i][1]);
+        }
+        if(args[0] == "wait")
+        {
+          Wait();
+          continue;
         }
         if(args[0] == "exit")
         {
@@ -351,33 +361,39 @@ void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int typ
     std::cout << "pwd Error\n";
   else
     std::cout << buf << std::endl;
-  if(cmdVector.size() > 1)//处理管道
-  {
-    if(pos != 0)//不是第一条命令
-    {
-      close(fd[pos-1][0]);//关闭前一个读口
-    }
-    if(pos != cmdVector.size()-1)//不是最后一条命令
-    {
-      close(fd[pos][1]);//关闭后一个写口
-    }
-  }
+  // if(cmdVector.size() > 1)//处理管道
+  // {
+  //   if(pos != 0)//不是第一条命令
+  //   {
+  //     close(fd[pos-1][0]);//关闭前一个读口
+  //   }
+  //   if(pos != cmdVector.size()-1)//不是最后一条命令
+  //   {
+  //     close(fd[pos][1]);//关闭后一个写口
+  //   }
+  // }
 }
 
 void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2])
 {
-  if(cmdVector.size() > 1)
-  {
-    if(pos != 0)//处理管道：不是第一条指令
-    {
-      close(fd[pos-1][0]);
-    }
-    if(pos != cmdVector.size()-1)//不是最后一条命令
-    {
-      close(fd[pos][0]);
-    }
-  }
+  // if(cmdVector.size() > 1)
+  // {
+  //   if(pos != 0)//处理管道：不是第一条指令
+  //   {
+  //     close(fd[pos-1][0]);
+  //   }
+  //   if(pos != cmdVector.size()-1)//不是最后一条命令
+  //   {
+  //     close(fd[pos][0]);
+  //   }
+  // }
   
   if(chdir(path.c_str()) != 0)
     std::cout << "cd Error\n";
+}
+
+void Wait()
+{
+  int signal;
+  while(wait(&signal) >= 0);
 }
