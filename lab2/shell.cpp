@@ -73,11 +73,12 @@ int main() {
     std::string path;
     int type;
     int pgid;
+    pid_t pid;
 
     for(int i = 0; i < cmdVector.size(); i++)
     {
       divideCmd(cmdVector[i], args, path, type);
-      pid_t pid = fork();
+      pid = fork();
       if(pid == 0)
       {
         //raise(SIGTSTP);
@@ -223,7 +224,7 @@ int main() {
     
     int ret;
     //ret = waitpid(-pgid, NULL, 0);
-    wait(&ret);
+    ret = waitpid(pid, NULL, 0);
     //perror("?");
     if(ret < 0)
       std::cout << "Wait failed" << std::endl;
