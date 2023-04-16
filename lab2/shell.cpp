@@ -19,16 +19,12 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-int rst = 0;
-
-//在子进程和父进程间通信的管道
-int sig[2];
-
-void setPipe(int pos, int *fd, int size);//处理管道
 std::vector<std::string> split(std::string s, const std::string &delimiter);
 void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type);
 int strlen(char * str, int size);
 void shellHandleSIGINT(int a);
+void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2]);
+void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2]);
 
 int main() {
   // 不同步 iostream 和 cstdio 的 buffer
@@ -49,261 +45,192 @@ int main() {
   sigaction(SIGINT, &shellSIGINT, &childSIGINT);
   signal(SIGTTOU, SIG_IGN);
 
-  //存储当前执行到哪条指令
-  int pos = 0;
-  //保存管道的文件描述符
-  int fd[3];
-
-  // 打印提示符
-  std::cout << "# ";
-  // 读入一行。std::getline 结果不包含换行符。
-  std::getline(std::cin, cmdline);
-  //分割
-  cmdVector = split(cmdline, "|");
-
-  if(cmdVector.size() > 1)//需要建立管道
-  {
-    if(pipe(fd+1) != 0)
-      exit(-1);
-    fd[0] = 0;
-    //std::cout << "Make pipe" << std::endl;
-  }
+  int (*fd)[2];
 
   while (true) {
-    //tcsetpgrp(0, getpgrp());
-    if(pos == cmdVector.size() || rst)
-    {
-      if(cmdVector.size() > 1)//把上一次的管道关了
-        close(fd[0]);
-      pos = 0; rst = 0;
-      // 打印提示符
-      std::cout << "# ";
-      // 读入一行。std::getline 结果不包含换行符。
-      std::getline(std::cin, cmdline);
-      //std::cout << "getline" << std::endl;
-      //分割
-      cmdVector = split(cmdline, "|");
-      //std::cout << "split" << std::endl;
+    //perror("!");
+    if(cmdVector.size() > 1)
+      free(fd);
+    // 打印提示符
+    // fflush(stdout);
+    std::cout << "# ";
+    std::cout.flush();
+    // 读入一行。std::getline 结果不包含换行符。
+    std::getline(std::cin, cmdline);
+    //分割
+    cmdVector = split(cmdline, "|");
 
-      if(cmdVector.size() > 1)//需要建立管道
+    if(cmdVector.size() > 1)//需要建立管道
+    {
+      fd = (int (*)[2])malloc(2 * (cmdVector.size()-1) * sizeof(int));
+      for(int i = 0; i < cmdVector.size()-1; i++)
       {
-        if(pipe(fd+1) != 0)
-          exit(-1);
-        fd[0] = 0;
-        //std::cout << "Make pipe" << std::endl;
+        pipe(fd[i]);
       }
-      //std::cout << "pipe" << std::endl;
     }
     
     std::vector<std::string> args;
     std::string path;
     int type;
-    divideCmd(cmdVector[pos], args, path, type);
-    //std::cout << args[args.size()-1] << '\n' << path << std::endl;
+    int pgid;
 
-    //跳过
-    if(args[0] == "")
+    for(int i = 0; i < cmdVector.size(); i++)
     {
-      pos++;
-      continue;
-    }
-
-    // 退出
-    if (args[0] == "exit") {
-      if (args.size() <= 1) {
-        return 0;
-      }
-
-      // std::string 转 int
-      std::stringstream code_stream(args[1]);
-      int code = 0;
-      code_stream >> code;
-
-      // 转换失败
-      if (!code_stream.eof() || code_stream.fail()) {
-        std::cout << "Invalid exit code\n";
-        continue;
-      }
-
-      return code;
-    }
-
-    if (args[0] == "pwd") {
-      char buf[256];
-      if(getcwd(buf, sizeof(buf)) == NULL)
-        std::cout << "pwd Error\n";
-      else if(pos != cmdVector.size()-1)//处理管道：不是最后一条命令
+      divideCmd(cmdVector[i], args, path, type);
+      pid_t pid = fork();
+      if(pid == 0)
       {
-        write(fd[2], buf, sizeof(buf));
-      }
-      else if(type > 0)
-      {
-        int dpo;
-        if(type == 1)//>
+        //raise(SIGTSTP);
+        sigaction(SIGINT, &childSIGINT, NULL);
+        signal(SIGTTOU, SIG_DFL);
+        // setpgid(getpid(), getpid());
+
+        if(args[0] == "")//空命令
         {
-          dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
-        }
-        else//>>
-        {
-          dpo = open(path.c_str(), O_APPEND | O_WRONLY);
-        }
-        if(dpo < 0) 
-          std::cout << "open Error\n";
-        else
-        {
-          write(dpo, buf, strlen(buf, sizeof(buf)));
-        }
-      }
-      else
-        std::cout << buf << '\n';
-      setPipe(pos, fd, cmdVector.size());
-      pos++;
-      continue;
-    }
-
-    if (args[0] == "cd") {
-      if(pos != 0)//处理管道：不是第一条指令
-      {
-        char buf[256];
-        read(fd[0], buf, sizeof(buf));//从pipe中读取
-        if(chdir(buf) != 0)
-          std::cout << "cd Error\n";
-      }
-      else
-      {
-        if(chdir(args[1].c_str()) != 0)
-          std::cout << "cd Error\n";
-      }
-
-      setPipe(pos, fd, cmdVector.size());
-      pos++;
-      continue;
-    }
-    // 处理外部命令
-
-    // std::vector<std::string> 转 char **
-    char *arg_ptrs[args.size() + 1];
-    for (auto i = 0; i < args.size(); i++) {
-        arg_ptrs[i] = &args[i][0];
-    }
-    // exec p 系列的 argv 需要以 nullptr 结尾
-    arg_ptrs[args.size()] = nullptr;
-
-    pid_t pid = fork();
-
-    if (pid == 0) {
-      // 这里只有子进程才会进入
-      // execvp 会完全更换子进程接下来的代码，所以正常情况下 execvp 之后这里的代码就没意义了
-      // 如果 execvp 之后的代码被运行了，那就是 execvp 出问题了
-      sigaction(SIGINT, &childSIGINT, NULL);
-      signal(SIGTTOU, SIG_DFL);
-      //std::cout << "Child:" << getpgrp() << std::endl;
-      //std::cout << "Child pid:" << getpid() << std::endl;
-      if(type >= 0)//需要重定向
-      {
-        if(type == 0)//重定向输入
-        {
-          int dpin = open(path.c_str(),  O_RDONLY);
-          if(dpin < 0)  
-            std::cout << "Redirection Error\n";
-          else
+          if(cmdVector.size() > 1)
           {
-            dup2(dpin, 0);
-            close(dpin);
+            if(i != 0)//处理管道：不是第一条指令
+            {
+              close(fd[i-1][0]);
+            }
+            if(i != cmdVector.size()-1)//不是最后一条命令
+            {
+              close(fd[i][0]);
+            }
+          }
+          return 0;
+        }
+        if(args[0] == "exit")//exit
+        {
+          return 0;
+        }
+        if(args[0] == "cd")//cd
+        {
+          cd(i, cmdVector, path, type, fd);
+          return 0;
+        }
+        if(args[0] == "pwd")//pwd
+        {
+          pwd(i, cmdVector, path, type, fd);
+          return 0;
+        }
+
+        // 处理外部命令
+
+        // std::vector<std::string> 转 char **
+        char *arg_ptrs[args.size() + 1];
+        for (auto i = 0; i < args.size(); i++) {
+            arg_ptrs[i] = &args[i][0];
+        }
+        // exec p 系列的 argv 需要以 nullptr 结尾
+        arg_ptrs[args.size()] = nullptr;
+
+        if(cmdVector.size() > 1)//处理管道
+        {
+          if(i != 0)//不是第一条命令
+          {
+            dup2(fd[i-1][0], 0);
+            close(fd[i-1][0]);
+          }
+          if(i != cmdVector.size()-1)//不是最后一条命令
+          {
+            dup2(fd[i][1], 1);
+            close(fd[i][1]);
           }
         }
-        else if(type == 1)//>
+        if(type >= 0)//需要重定向
         {
-          int dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
-          if(dpo < 0)  
-            std::cout << "Redirection Error\n";
-          else
+          if(type == 0)//重定向输入
           {
-            dup2(dpo, 1);
-            close(dpo);
+            int dpin = open(path.c_str(),  O_RDONLY);
+            if(dpin < 0)  
+              std::cout << "Redirection Error\n";
+            else
+            {
+              dup2(dpin, 0);
+              close(dpin);
+            }
+          }
+          else if(type == 1)//>
+          {
+            int dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
+            if(dpo < 0)  
+              std::cout << "Redirection Error\n";
+            else
+            {
+              dup2(dpo, 1);
+              close(dpo);
+            }
+          }
+          else//>>
+          {
+            int dpo = open(path.c_str(), O_APPEND | O_WRONLY);
+            if(dpo < 0)  
+              std::cout << "Redirection Error\n";
+            else
+            {
+              dup2(dpo, 1);
+              close(dpo);
+            }
           }
         }
-        else//>>
-        {
-          int dpo = open(path.c_str(), O_APPEND | O_WRONLY);
-          if(dpo < 0)  
-            std::cout << "Redirection Error\n";
-          else
-          {
-            dup2(dpo, 1);
-            close(dpo);
-          }
-        }
-      }
-      if(pos != 0)//处理管道：不是第一条指令
-      {
-        dup2(fd[0], 0);
-        close(fd[0]);
-      }
-      if(pos != cmdVector.size()-1)//处理管道：不是最后一条指令
-      {
-        dup2(fd[2], 1);
-        close(fd[2]);
-      }
-      
-      execvp(args[0].c_str(), arg_ptrs);
-      // 所以这里直接报错
-      exit(255);
-    }
 
-    // 这里只有父进程（原进程）才会进入
-    setpgid(pid, pid);
-    tcsetpgrp(0, pid);
-    //std::cout << "Father:" << getpgrp() << std::endl;
-    int status;
-    int ret = waitpid(pid, &status, 0);
-    // int ret;
-    // wait(&ret);
-    //std::cout << "Wait end" << std::endl;
+        // execvp 会完全更换子进程接下来的代码，所以正常情况下 execvp 之后这里的代码就没意义了
+        // 如果 execvp 之后的代码被运行了，那就是 execvp 出问题了
+        execvp(args[0].c_str(), arg_ptrs);
+        // 所以这里直接报错
+        // std::cout << "Error" << std::endl;
+        exit(255);
+      }
+      else//父进程
+      {
+        //kill(pid, SIGSTOP);
+        if(i == 0)
+          pgid = pid;
+        setpgid(pid, pgid);
+        if(i == 0)
+          tcsetpgrp(0, pgid);
+        //kill(pid, SIGCONT);
+        
+        if(i == cmdVector.size()-1)
+          tcsetpgrp(0, pid);
+        
+        if(cmdVector.size() > 1)
+        {
+          if(i != 0)
+            close(fd[i-1][0]);
+          if(i != cmdVector.size()-1)
+            close(fd[i][1]);
+        }
+        if(args[0] == "exit")
+        {
+          if(args.size() <= 1)
+            exit(0);
+          std::stringstream code_stream(args[1]);
+          int code = 0;
+          code_stream >> code;
+
+          // 转换失败
+          if (!code_stream.eof() || code_stream.fail()) {
+            std::cout << "Invalid exit code\n";
+            continue;
+          }
+
+          exit(code);
+        }
+      }
+    }
+    
+    int ret;
+    //ret = waitpid(-pgid, NULL, 0);
+    wait(&ret);
+    //perror("?");
+    if(ret < 0)
+      std::cout << "Wait failed" << std::endl;
     tcsetpgrp(0, getpgrp());
-    if (ret < 0) {
-      std::cout << "wait failed";
-    }
-    else if(WIFSIGNALED(status))//子进程被信号终止，结束语句运行并重新输入
-    {
-      rst = 1;
-      std::cout << std::endl;
-      //std::cout << status << std::endl;
-    }
-    
-
-    setPipe(pos, fd, cmdVector.size());
-    //std::cout << "set pipe end" << std::endl;
-    //getchar();
-    pos++;
   }
 }
 
-void setPipe(int pos, int *fd, int size)
-{
-  if(pos != 0)//不是第一条指令，关闭上一条管道读口
-  {
-    close(fd[0]); 
-    //std::cout << "close0" << std::endl;
-  }
-    
-  fd[0] = fd[1]; 
-  if(pos != size-1)//不是最后一条指令，关闭这一条管道的写口
-  {
-    close(fd[2]);
-    //std::cout << "close2" << std::endl;
-  }
-    
-  if(pos < size-2 && !rst)//倒数第二条之前的指令还需新建管道（除非命令被中止执行）
-  {
-    if(pipe(fd+1) != 0)
-    {
-      std::cout << "pipe Error" << std::endl;
-      exit(-1);
-    }
-  }
-  return;
-}
 
 // 经典的 cpp string split 实现
 // https://stackoverflow.com/a/14266139/11691878
@@ -320,7 +247,7 @@ std::vector<std::string> split(std::string s, const std::string &delimiter) {
   return res;
 }
 
-int getLast(std::string cmd, int &type)
+int getLast(std::string cmd, int &type)//获得最后一个重定向符号的位置，以及重定向类型
 {
   auto a = cmd.find_last_of("<>");
   if(a == -1) type = -1;
@@ -333,14 +260,14 @@ int getLast(std::string cmd, int &type)
   return a;
 }
 
-void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type)
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type)//分割一条命令，返回参数，重定向类型和路径（如果有的话）
 {
   auto firstPos = cmd.find_first_of("<>");
   std::string tempStr;
   if(firstPos >= 0 && firstPos < cmd.length())
   {
     tempStr = cmd.substr(0, firstPos);//截取除掉重定向部分之后的命令
-    auto lastPos = getLast(cmd, type);
+    auto lastPos = getLast(cmd, type);//只有最后一个重定向符号有效
     path = cmd.substr(lastPos + 1, cmd.length() - lastPos - 1);
   }
   else
@@ -367,12 +294,77 @@ int strlen(char * str, int size)
   return i;
 }
 
-void shellHandleSIGINT(int a)
+void shellHandleSIGINT(int a)//shell中处理SIGINT
 {
   //rst = 1;
   int num = std::cin.rdbuf()->in_avail();
   std::cin.ignore(num);
+  std::cin.clear();
   std::cout << '\n' << "# ";
   std::cout.flush();
   //std::cout << "SIGINT" << std::endl;
+}
+
+void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2])
+{
+  char buf[256];
+  if(getcwd(buf, sizeof(buf)) == NULL)
+    std::cout << "pwd Error\n";
+  else if(cmdVector.size() > 1)//处理管道
+  {
+    if(pos != 0)//不是第一条命令
+    {
+      close(fd[pos-1][0]);//关闭前一个读口
+    }
+    if(pos != cmdVector.size()-1)//不是最后一条命令
+    {
+      write(fd[pos][1], buf, strlen(buf, sizeof(buf)));
+      close(fd[pos][1]);//关闭后一个读口
+    }
+    
+  }
+  else if(type > 0)//重定向
+  {
+    int dpo;
+    if(type == 1)//>
+    {
+      dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
+    }
+    else//>>
+    {
+      dpo = open(path.c_str(), O_APPEND | O_WRONLY);
+    }
+    if(dpo < 0) 
+      std::cout << "open Error\n";
+    else
+    {
+      write(dpo, buf, strlen(buf, sizeof(buf)));
+    }
+  }
+  else
+    std::cout << buf << std::endl;
+}
+
+void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2])
+{
+  if(cmdVector.size() > 1)
+  {
+    if(pos != 0)//处理管道：不是第一条指令
+    {
+      char buf[256];
+      read(fd[pos-1][0], buf, sizeof(buf));//从pipe中读取
+      close(fd[pos-1][0]);
+      if(chdir(buf) != 0)
+        std::cout << "cd Error\n";
+    }
+    if(pos != cmdVector.size()-1)//不是最后一条命令
+    {
+      close(fd[pos][0]);
+    }
+  }
+  else
+  {
+    if(chdir(path.c_str()) != 0)
+      std::cout << "cd Error\n";
+  }
 }
