@@ -18,12 +18,14 @@
 //#include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+//stdlib
+#include <stdlib.h>
 
 std::vector<std::string> split(std::string s, const std::string &delimiter);
-void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type, int &backstage);
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type);
+void getBackstage(std::string &cmdline, int &backstage);
 int strlen(char * str, int size);
 void shellHandleSIGINT(int a);
-void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2]);
 void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2]);
 void Wait();
 
@@ -36,6 +38,9 @@ int main() {
 
   //存储按"|"分割的命令
   std::vector<std::string> cmdVector;
+
+  //是否在后台执行
+  int backstage = 0;
 
   //设置信号处理的结构体
   struct sigaction shellSIGINT, childSIGINT;
@@ -58,6 +63,8 @@ int main() {
     std::cout.flush();
     // 读入一行。std::getline 结果不包含换行符。
     std::getline(std::cin, cmdline);
+    //检查是否挂后台
+    getBackstage(cmdline, backstage);
     //分割
     cmdVector = split(cmdline, "|");
 
@@ -74,13 +81,12 @@ int main() {
     std::string path;//重定向路径
     int type;//重定向类型
     int pgid = 0;
-    int backstage = 0;//是否在后台执行
     pid_t pid;
     pid_t wpid = -1;
 
     for(int i = 0; i < cmdVector.size(); i++)
     {
-      divideCmd(cmdVector[i], args, path, type, backstage);
+      divideCmd(cmdVector[i], args, path, type);
       pid = fork();
       if(pid == 0)
       {
@@ -126,24 +132,11 @@ int main() {
             std::cout << "fd0 error!" << std::endl;
         }
 
-        if(args[0] == "wait")//wait由父进程处理
+        if(args[0] == "wait" || args[0] == "exit" || args[0] == "cd" || args[0] == "pwd")//由父进程处理
         {
           return 0;
         }
-        if(args[0] == "exit")//exit由父进程处理
-        {
-          return 0;
-        }
-        if(args[0] == "cd")//cd
-        {
-          cd(i, cmdVector, path, type, fd);
-          return 0;
-        }
-        if(args[0] == "pwd")//pwd
-        {
-          pwd(i, cmdVector, path, type, fd);
-          return 0;
-        }
+        
 
         // 处理外部命令
 
@@ -215,7 +208,7 @@ int main() {
       else//父进程
       {
         //kill(pid, SIGSTOP);
-        if(backstage == 0 && args[0] != "exit" && args[0] != "wait")//不在后台运行才设置进程组
+        if(backstage == 0 && args[0] != "exit" && args[0] != "wait" && args[0] != "cd" && args[0] != "pwd")//不在后台运行才设置进程组
         {
           wpid = pid;
           if(pgid == 0)
@@ -256,6 +249,30 @@ int main() {
           }
 
           exit(code);
+        }
+        if(args[0] == "cd")
+        {
+          if(args.size() > 1)
+          {
+            if(chdir(args[1].c_str()) != 0)
+              std::cout << "cd error!" << std::endl;
+          }
+          else//cd无参数，默认进入家目录
+          {
+            char *path = getenv("HOME");
+            if(chdir(path) != 0)
+              std::cout << "cd error!" << std::endl;
+          }
+          continue;
+        }
+        if(args[0] == "pwd")
+        {
+          char buf[256];
+          if(getcwd(buf, sizeof(buf)) == NULL)
+            std::cout << "pwd Error\n";
+          else
+            std::cout << buf << std::endl;
+          continue;
         }
       }
     }
@@ -299,20 +316,15 @@ int getLast(std::string cmd, int &type)//获得最后一个重定向符号的位
   return a;
 }
 
-void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type, int &backstage)//分割一条命令，返回参数，重定向类型和路径（如果有的话）
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type)//分割一条命令，返回参数，重定向类型和路径（如果有的话）
 {
   //裁一下两端空格
   cmd.erase(0,cmd.find_first_not_of(" "));
   cmd.erase(cmd.find_last_not_of(" ") + 1);
-  if(cmd.size() > 0 && cmd.substr(cmd.size()-1, 1) == "&")
-  {
-    backstage = 1;
-    cmd.erase(cmd.size()-1);
-  }
-  else
-    backstage = 0;
   auto firstPos = cmd.find_first_of("<>");
   std::string tempStr;
+  if(cmd.size() > 0 && cmd.substr(cmd.size()-1) == "&")
+    cmd.erase(cmd.size()-1);
   if(firstPos >= 0 && firstPos < cmd.length())
   {
     tempStr = cmd.substr(0, firstPos);//截取除掉重定向部分之后的命令
@@ -333,6 +345,18 @@ void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &pa
   tempStr.erase(tempStr.find_last_not_of(" ") + 1);
   args = split(tempStr, " ");
   return;
+}
+
+void getBackstage(std::string &cmdline, int &backstage)
+{
+  //裁一下两端空格
+  cmdline.erase(0,cmdline.find_first_not_of(" "));
+  cmdline.erase(cmdline.find_last_not_of(" ") + 1);
+
+  if(cmdline.size() > 0 && cmdline.substr(cmdline.size()-1, 1) == "&")
+    backstage = 1;
+  else
+    backstage = 0;
 }
 
 int strlen(char * str, int size)
@@ -374,23 +398,7 @@ void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int typ
   // }
 }
 
-void cd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2])
-{
-  // if(cmdVector.size() > 1)
-  // {
-  //   if(pos != 0)//处理管道：不是第一条指令
-  //   {
-  //     close(fd[pos-1][0]);
-  //   }
-  //   if(pos != cmdVector.size()-1)//不是最后一条命令
-  //   {
-  //     close(fd[pos][0]);
-  //   }
-  // }
-  
-  if(chdir(path.c_str()) != 0)
-    std::cout << "cd Error\n";
-}
+
 
 void Wait()
 {
