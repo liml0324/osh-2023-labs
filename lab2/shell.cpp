@@ -65,6 +65,8 @@ int main() {
     // 打印提示符
     if(nextHistory == 0)//执行新命令
     {
+      //获取方向键输入
+
       char buf[256];
       if(getcwd(buf, sizeof(buf)) == NULL)
         ;
@@ -432,7 +434,13 @@ void shellHandleSIGINT(int a)//shell中处理SIGINT
   int num = std::cin.rdbuf()->in_avail();
   std::cin.ignore(num);
   std::cin.clear();
-  std::cout << '\n' << "# ";
+  std::cout << '\n';
+  char buf[256];
+  if(getcwd(buf, sizeof(buf)) == NULL)
+    ;
+  else
+    std::cout << buf;
+  std::cout << " $ ";
   std::cout.flush();
   //std::cout << "SIGINT" << std::endl;
 }
