@@ -26,7 +26,6 @@ void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &pa
 void getBackstage(std::string &cmdline, int &backstage);
 int strlen(char * str, int size);
 void shellHandleSIGINT(int a);
-void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2]);
 void Wait();
 
 int main() {
@@ -38,6 +37,12 @@ int main() {
 
   //存储按"|"分割的命令
   std::vector<std::string> cmdVector;
+
+  //历史命令
+  std::vector<std::string> historyCmd;
+
+  //下一次执行历史命令
+  int nextHistory = 0;
 
   //是否在后台执行
   int backstage = 0;
@@ -58,11 +63,28 @@ int main() {
     if(cmdVector.size() > 1)
       free(fd);
     // 打印提示符
-    // fflush(stdout);
-    std::cout << "# ";
-    std::cout.flush();
-    // 读入一行。std::getline 结果不包含换行符。
-    std::getline(std::cin, cmdline);
+    if(nextHistory == 0)//执行新命令
+    {
+      char buf[256];
+      if(getcwd(buf, sizeof(buf)) == NULL)
+        ;
+      else
+        std::cout << buf;
+      std::cout << " $ ";
+      std::cout.flush();
+      // 读入一行。std::getline 结果不包含换行符。
+      std::getline(std::cin, cmdline);
+      //记录历史命令
+      historyCmd.push_back(cmdline);
+    }
+    else//执行历史命令
+    {
+      cmdline = historyCmd[nextHistory-1];
+      historyCmd.push_back(cmdline);
+      std::cout << cmdline << std::endl;
+      nextHistory = 0;
+    }
+    
     //检查是否挂后台
     getBackstage(cmdline, backstage);
     //分割
@@ -90,24 +112,12 @@ int main() {
       pid = fork();
       if(pid == 0)
       {
-        //raise(SIGTSTP);
         sigaction(SIGINT, &childSIGINT, NULL);
         signal(SIGTTOU, SIG_DFL);
-        // setpgid(getpid(), getpid());
 
-        if(args[0] == "")//空命令
+        if(args[0] == "" || args[0] == "wait" || args[0] == "exit" || args[0] == "cd" || args[0] == "pwd" \
+        || args[0] == "history" || args[0].substr(0, 1) == "!")//由父进程处理
         {
-          if(cmdVector.size() > 1)
-          {
-            if(i != 0)//处理管道：不是第一条指令
-            {
-              close(fd[i-1][0]);
-            }
-            if(i != cmdVector.size()-1)//不是最后一条命令
-            {
-              close(fd[i][0]);
-            }
-          }
           return 0;
         }
 
@@ -130,11 +140,6 @@ int main() {
           }
           else
             std::cout << "fd0 error!" << std::endl;
-        }
-
-        if(args[0] == "wait" || args[0] == "exit" || args[0] == "cd" || args[0] == "pwd")//由父进程处理
-        {
-          return 0;
         }
         
 
@@ -207,8 +212,8 @@ int main() {
       }
       else//父进程
       {
-        //kill(pid, SIGSTOP);
-        if(backstage == 0 && args[0] != "exit" && args[0] != "wait" && args[0] != "cd" && args[0] != "pwd")//不在后台运行才设置进程组
+        if(backstage == 0 && args[0] != "exit" && args[0] != "wait" && args[0] != "cd" && args[0] != "pwd" \
+        && args[0] != "history" && args[0].substr(0, 1) != "!")//不在后台运行且不是内置命令才设置进程组
         {
           wpid = pid;
           if(pgid == 0)
@@ -216,11 +221,6 @@ int main() {
           setpgid(pid, pgid);
           tcsetpgrp(0, pgid);
         }
-        
-        //kill(pid, SIGCONT);
-        
-        // if(i == cmdVector.size()-1)
-        //   tcsetpgrp(0, pid);
         
         if(cmdVector.size() > 1)
         {
@@ -274,15 +274,74 @@ int main() {
             std::cout << buf << std::endl;
           continue;
         }
+        if(args[0] == "history")
+        {
+          if(args.size() > 1)
+          {
+            std::stringstream code_stream(args[1]);
+            int num = 0;
+            code_stream >> num;
+
+            // 转换失败
+            if (!code_stream.eof() || code_stream.fail()) {
+              std::cout << "Invalid history code\n";
+              continue;
+            }
+            if(num > historyCmd.size())
+              num = historyCmd.size();
+            for(int i = historyCmd.size()-num; i < historyCmd.size(); i++)
+              std::cout << i << "\t\t" << historyCmd[i] << std::endl;
+          }
+          else
+          {
+            for(int i = 0; i < historyCmd.size(); i++)
+              std::cout << i << "\t\t" << historyCmd[i] << std::endl;
+          }
+        }
+        if(args[0].substr(0, 1) == "!")
+        {
+          historyCmd.pop_back();//!!和!n命令不加入历史记录
+          if(args[0] == "!!")//执行上一条命令
+          {
+            nextHistory = historyCmd.size();
+          }
+          else//执行标号为num的命令
+          {
+            std::stringstream code_stream(args[0].substr(1));
+            int num = 0;
+            code_stream >> num;
+            // 转换失败
+            if (!code_stream.eof() || code_stream.fail()) {
+              std::cout << "Invalid history code\n";
+              continue;
+            }
+            if(num > historyCmd.size())
+            {
+              std::cout << "No such command in history\n";
+              continue;
+            }
+            nextHistory = num;
+          }
+        }
       }
     }
     
     int ret = 0;
+    int status = 0;
     if(wpid != -1)
-      ret = waitpid(wpid, NULL, 0);//等待管道中最后一个进程结束
+      ret = waitpid(wpid, &status, 0);//等待管道中最后一个进程结束
     //perror("?");
     if(ret < 0)
       std::cout << "Wait failed" << std::endl;
+    else
+    {
+      if(WIFSIGNALED(status))
+        if(WTERMSIG(status) == SIGINT)//子进程被Ctrl C中断，换一行
+        {
+          std::cout << '\n';
+          std::cout.flush();
+        }
+    }
     tcsetpgrp(0, getpgrp());
   }
 }
@@ -377,28 +436,6 @@ void shellHandleSIGINT(int a)//shell中处理SIGINT
   std::cout.flush();
   //std::cout << "SIGINT" << std::endl;
 }
-
-void pwd(int pos, std::vector<std::string> &cmdVector, std::string path, int type, int (*fd)[2])
-{
-  char buf[256];
-  if(getcwd(buf, sizeof(buf)) == NULL)
-    std::cout << "pwd Error\n";
-  else
-    std::cout << buf << std::endl;
-  // if(cmdVector.size() > 1)//处理管道
-  // {
-  //   if(pos != 0)//不是第一条命令
-  //   {
-  //     close(fd[pos-1][0]);//关闭前一个读口
-  //   }
-  //   if(pos != cmdVector.size()-1)//不是最后一条命令
-  //   {
-  //     close(fd[pos][1]);//关闭后一个写口
-  //   }
-  // }
-}
-
-
 
 void Wait()
 {
