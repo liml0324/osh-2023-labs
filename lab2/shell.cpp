@@ -74,6 +74,11 @@ int main() {
       std::cout.flush();
       // 读入一行。std::getline 结果不包含换行符。
       std::getline(std::cin, cmdline);
+      if(std::cin.eof())
+      {
+        std::cout << "\nexit" << std::endl;
+        exit(0);
+      }
       //记录历史命令
       historyCmd.push_back(cmdline);
     }
