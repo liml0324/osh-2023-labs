@@ -21,6 +21,8 @@
 //stdlib
 #include <stdlib.h>
 
+#include <fstream>
+
 std::vector<std::string> split(std::string s, const std::string &delimiter);
 void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type);
 void getBackstage(std::string &cmdline, int &backstage);
@@ -139,11 +141,12 @@ int main() {
       for(int i = 0; i < cmdVector.size(); i++)
       {
         divideCmd(cmdVector[i], args, path, type);
+        //std::cout << "args[0] = " << args[0] << std::endl;
         pid_ = fork();
         if(pid_ == 0)
         {
           if(args[0] == "" || args[0] == "wait" || args[0] == "exit" || args[0] == "cd" || args[0] == "pwd" \
-          || args[0] == "history" || args[0].substr(0, 1) == "!")//由父进程处理
+          || args[0] == "history" || args[0][0] == '!')//由父进程处理
           {
             return 0;
           }
@@ -206,6 +209,34 @@ int main() {
                 close(dpo);
               }
             }
+          }
+
+          if(args[0] == "echo" && args[1][0] == '~')
+          {
+            std::string username = args[1].substr(1, args[1].size()-1);
+            std::ifstream inFile;
+            inFile.open("/etc/passwd", std::ios::in);
+            std::string str;
+            std::vector<std::string> items;
+            std::string homePath;
+            while(std::getline(inFile, str))
+            {
+              items = split(str, ":");
+              if(items[0] == username)
+              {
+                homePath = items[5];
+                break;
+              }
+            }
+            if(!homePath.empty())
+            {
+              std::cout << homePath << std::endl;
+            }
+            else
+            {
+              std::cout << "No such user" << std::endl;
+            }
+            return 0;
           }
 
           // execvp 会完全更换子进程接下来的代码，所以正常情况下 execvp 之后这里的代码就没意义了
