@@ -60,8 +60,6 @@ int main() {
 
   while (true) {
     //perror("!");
-    if(cmdVector.size() > 1)
-      free(fd);
     // 打印提示符
     if(nextHistory == 0)//执行新命令
     {
@@ -91,146 +89,163 @@ int main() {
     getBackstage(cmdline, backstage);
     //分割
     cmdVector = split(cmdline, "|");
-
-    if(cmdVector.size() > 1)//需要建立管道
+    pid_t pid = fork();
+    if(pid == 0)//子进程
     {
-      fd = (int (*)[2])malloc(2 * (cmdVector.size()-1) * sizeof(int));
-      for(int i = 0; i < cmdVector.size()-1; i++)
+      sigaction(SIGINT, &childSIGINT, NULL);
+      signal(SIGTTOU, SIG_DFL);
+
+      if(cmdVector.size() > 1)//需要建立管道
       {
-        pipe(fd[i]);
+        fd = (int (*)[2])malloc(2 * (cmdVector.size()-1) * sizeof(int));
+        for(int i = 0; i < cmdVector.size()-1; i++)
+        {
+          pipe(fd[i]);
+        }
       }
+      
+      if(backstage == 1)//后台执行
+      {
+        umask(0);
+        int fd0 = 0;
+        signal(SIGPIPE, SIG_IGN);
+        setsid();
+        if((fd0 = open("/dev/null", O_RDWR)) != -1)
+        {
+          //std::cout << fd0 << std::endl;
+          dup2(fd0, STDIN_FILENO);
+          dup2(fd0, STDOUT_FILENO);
+          dup2(fd0, STDERR_FILENO);
+          if(fd0 > STDERR_FILENO)
+          {
+            close(fd0);
+          }
+        }
+        else
+          std::cout << "fd0 error!" << std::endl;
+      }
+      
+      std::vector<std::string> args;
+      std::string path;//重定向路径
+      int type;//重定向类型
+      int pgid = 0;
+      pid_t pid_;
+
+      for(int i = 0; i < cmdVector.size(); i++)
+      {
+        divideCmd(cmdVector[i], args, path, type);
+        pid_ = fork();
+        if(pid_ == 0)
+        {
+          if(args[0] == "" || args[0] == "wait" || args[0] == "exit" || args[0] == "cd" || args[0] == "pwd" \
+          || args[0] == "history" || args[0].substr(0, 1) == "!")//由父进程处理
+          {
+            return 0;
+          }
+
+          // 处理外部命令
+
+          // std::vector<std::string> 转 char **
+          char *arg_ptrs[args.size() + 1];
+          for (auto i = 0; i < args.size(); i++) {
+              arg_ptrs[i] = &args[i][0];
+          }
+          // exec p 系列的 argv 需要以 nullptr 结尾
+          arg_ptrs[args.size()] = nullptr;
+
+          if(cmdVector.size() > 1)//处理管道
+          {
+            if(i != 0)//不是第一条命令
+            {
+              dup2(fd[i-1][0], 0);
+              close(fd[i-1][0]);
+            }
+            if(i != cmdVector.size()-1)//不是最后一条命令
+            {
+              dup2(fd[i][1], 1);
+              close(fd[i][1]);
+            }
+          }
+          if(type >= 0)//需要重定向
+          {
+            if(type == 0)//重定向输入
+            {
+              int dpin = open(path.c_str(),  O_RDONLY);
+              if(dpin < 0)  
+                std::cout << "Redirection Error\n";
+              else
+              {
+                dup2(dpin, 0);
+                close(dpin);
+              }
+            }
+            else if(type == 1)//>
+            {
+              int dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
+              if(dpo < 0)  
+                std::cout << "Redirection Error\n";
+              else
+              {
+                dup2(dpo, 1);
+                close(dpo);
+              }
+            }
+            else//>>
+            {
+              int dpo = open(path.c_str(), O_APPEND | O_WRONLY);
+              if(dpo < 0)  
+                std::cout << "Redirection Error\n";
+              else
+              {
+                dup2(dpo, 1);
+                close(dpo);
+              }
+            }
+          }
+
+          // execvp 会完全更换子进程接下来的代码，所以正常情况下 execvp 之后这里的代码就没意义了
+          // 如果 execvp 之后的代码被运行了，那就是 execvp 出问题了
+          execvp(args[0].c_str(), arg_ptrs);
+          // 所以这里直接报错
+          // std::cout << "Error" << std::endl;
+          exit(255);
+        }
+        else
+        {
+          if(i > 0)
+            close(fd[i-1][0]);
+          if(i < cmdVector.size()-1)
+            close(fd[i][1]);
+        }
+      }
+      
+      while(wait(NULL) >= 0);
+      //perror("?");
+      if(cmdVector.size() > 1)
+        free(fd);
+      return 0;
     }
-    
-    std::vector<std::string> args;
-    std::string path;//重定向路径
-    int type;//重定向类型
-    int pgid = 0;
-    pid_t pid;
-    pid_t wpid = -1;
-
-    for(int i = 0; i < cmdVector.size(); i++)
+    else//父进程
     {
-      divideCmd(cmdVector[i], args, path, type);
-      pid = fork();
-      if(pid == 0)
+      if(backstage == 0)//不在后台运行才设置进程组
       {
-        sigaction(SIGINT, &childSIGINT, NULL);
-        signal(SIGTTOU, SIG_DFL);
-
-        if(args[0] == "" || args[0] == "wait" || args[0] == "exit" || args[0] == "cd" || args[0] == "pwd" \
-        || args[0] == "history" || args[0].substr(0, 1) == "!")//由父进程处理
-        {
-          return 0;
-        }
-
-        if(backstage == 1)//后台执行
-        {
-          umask(0);
-          int fd0 = 0;
-          signal(SIGPIPE, SIG_IGN);
-          setsid();
-          if((fd0 = open("/dev/null", O_RDWR)) != -1)
-          {
-            //std::cout << fd0 << std::endl;
-            dup2(fd0, STDIN_FILENO);
-            dup2(fd0, STDOUT_FILENO);
-            dup2(fd0, STDERR_FILENO);
-            if(fd0 > STDERR_FILENO)
-            {
-              close(fd0);
-            }
-          }
-          else
-            std::cout << "fd0 error!" << std::endl;
-        }
-        
-
-        // 处理外部命令
-
-        // std::vector<std::string> 转 char **
-        char *arg_ptrs[args.size() + 1];
-        for (auto i = 0; i < args.size(); i++) {
-            arg_ptrs[i] = &args[i][0];
-        }
-        // exec p 系列的 argv 需要以 nullptr 结尾
-        arg_ptrs[args.size()] = nullptr;
-
-        if(cmdVector.size() > 1)//处理管道
-        {
-          if(i != 0)//不是第一条命令
-          {
-            dup2(fd[i-1][0], 0);
-            close(fd[i-1][0]);
-          }
-          if(i != cmdVector.size()-1)//不是最后一条命令
-          {
-            dup2(fd[i][1], 1);
-            close(fd[i][1]);
-          }
-        }
-        if(type >= 0)//需要重定向
-        {
-          if(type == 0)//重定向输入
-          {
-            int dpin = open(path.c_str(),  O_RDONLY);
-            if(dpin < 0)  
-              std::cout << "Redirection Error\n";
-            else
-            {
-              dup2(dpin, 0);
-              close(dpin);
-            }
-          }
-          else if(type == 1)//>
-          {
-            int dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
-            if(dpo < 0)  
-              std::cout << "Redirection Error\n";
-            else
-            {
-              dup2(dpo, 1);
-              close(dpo);
-            }
-          }
-          else//>>
-          {
-            int dpo = open(path.c_str(), O_APPEND | O_WRONLY);
-            if(dpo < 0)  
-              std::cout << "Redirection Error\n";
-            else
-            {
-              dup2(dpo, 1);
-              close(dpo);
-            }
-          }
-        }
-
-        // execvp 会完全更换子进程接下来的代码，所以正常情况下 execvp 之后这里的代码就没意义了
-        // 如果 execvp 之后的代码被运行了，那就是 execvp 出问题了
-        execvp(args[0].c_str(), arg_ptrs);
-        // 所以这里直接报错
-        // std::cout << "Error" << std::endl;
-        exit(255);
+        setpgid(pid, pid);
+        tcsetpgrp(0, pid);
+        int status = 0;
+        waitpid(pid, &status, 0);//等待执行完毕
+        if(WIFSIGNALED(status))
+          if(WTERMSIG(status) == SIGINT)
+            std::cout << std::endl;
       }
-      else//父进程
+      tcsetpgrp(0, getpgrp());
+      std::vector<std::string> args;
+      std::string path;
+      int type;
+
+
+      for(int i = 0; i < cmdVector.size(); i++)
       {
-        if(backstage == 0 && args[0] != "exit" && args[0] != "wait" && args[0] != "cd" && args[0] != "pwd" \
-        && args[0] != "history" && args[0].substr(0, 1) != "!")//不在后台运行且不是内置命令才设置进程组
-        {
-          wpid = pid;
-          if(pgid == 0)
-            pgid = pid;
-          setpgid(pid, pgid);
-          tcsetpgrp(0, pgid);
-        }
-        
-        if(cmdVector.size() > 1)
-        {
-          if(i != 0)
-            close(fd[i-1][0]);
-          if(i != cmdVector.size()-1)
-            close(fd[i][1]);
-        }
+        divideCmd(cmdVector[i], args, path, type);
         if(args[0] == "wait")
         {
           Wait();
@@ -292,12 +307,12 @@ int main() {
             if(num > historyCmd.size())
               num = historyCmd.size();
             for(int i = historyCmd.size()-num; i < historyCmd.size(); i++)
-              std::cout << i << "\t\t" << historyCmd[i] << std::endl;
+              std::cout << i+1 << "\t\t" << historyCmd[i] << std::endl;
           }
           else
           {
             for(int i = 0; i < historyCmd.size(); i++)
-              std::cout << i << "\t\t" << historyCmd[i] << std::endl;
+              std::cout << i+1 << "\t\t" << historyCmd[i] << std::endl;
           }
         }
         if(args[0].substr(0, 1) == "!")
@@ -327,24 +342,6 @@ int main() {
         }
       }
     }
-    
-    int ret = 0;
-    int status = 0;
-    if(wpid != -1)
-      ret = waitpid(wpid, &status, 0);//等待管道中最后一个进程结束
-    //perror("?");
-    if(ret < 0)
-      std::cout << "Wait failed" << std::endl;
-    else
-    {
-      if(WIFSIGNALED(status))
-        if(WTERMSIG(status) == SIGINT)//子进程被Ctrl C中断，换一行
-        {
-          std::cout << '\n';
-          std::cout.flush();
-        }
-    }
-    tcsetpgrp(0, getpgrp());
   }
 }
 
