@@ -147,7 +147,7 @@ int main() {
         if(pid_ == 0)
         {
           if(args[0] == "" || args[0] == "wait" || args[0] == "exit" || args[0] == "cd" || args[0] == "pwd" \
-          || args[0] == "history" || args[0][0] == '!')//由父进程处理
+          || args[0] == "history" || args[0][0] == '!' || args[0] == "OP" || args[0] == "xhy")//由父进程处理
           {
             return 0;
           }
@@ -179,7 +179,7 @@ int main() {
           {
             if(type & 0x1)//重定向输入
             {
-              std::cout << pathIn << std::endl;
+              //std::cout << pathIn << std::endl;
               int dpin = open(pathIn.c_str(),  O_RDONLY);
               if(dpin < 0)  
                 std::cout << "Redirection Error\n";
@@ -191,7 +191,7 @@ int main() {
             }
             if(type & 0x2)//>
             {
-              std::cout << pathOut << std::endl;
+              //std::cout << pathOut << std::endl;
               int dpo = open(pathOut.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
               if(dpo < 0)  
                 std::cout << "Redirection Error\n";
@@ -203,7 +203,7 @@ int main() {
             }
             if(type & 0x4)//>>
             {
-              std::cout << pathOut << std::endl;
+              //std::cout << pathOut << std::endl;
               int dpo = open(pathOut.c_str(), O_APPEND | O_WRONLY);
               if(dpo < 0)  
                 std::cout << "Redirection Error\n";
@@ -380,6 +380,16 @@ int main() {
             }
             nextHistory = num;
           }
+        }
+        if(args[0] == "OP")
+        {
+          std::cout << "原神怎么你了" << std::endl;
+          continue;
+        }
+        if(args[0] == "xhy")
+        {
+          std::cout << "终极无敌至尊非酋王" << std::endl;
+          continue;
         }
       }
     }
