@@ -24,7 +24,7 @@
 #include <fstream>
 
 std::vector<std::string> split(std::string s, const std::string &delimiter);
-void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type);
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &pathIn, std::string &pathOut, int &type);
 void getBackstage(std::string &cmdline, int &backstage);
 int strlen(char * str, int size);
 void shellHandleSIGINT(int a);
@@ -133,14 +133,15 @@ int main() {
       }
       
       std::vector<std::string> args;
-      std::string path;//重定向路径
+      std::string pathIn;//重定向路径
+      std::string pathOut;
       int type;//重定向类型
       int pgid = 0;
       pid_t pid_;
 
       for(int i = 0; i < cmdVector.size(); i++)
       {
-        divideCmd(cmdVector[i], args, path, type);
+        divideCmd(cmdVector[i], args, pathIn, pathOut, type);
         //std::cout << "args[0] = " << args[0] << std::endl;
         pid_ = fork();
         if(pid_ == 0)
@@ -174,11 +175,12 @@ int main() {
               close(fd[i][1]);
             }
           }
-          if(type >= 0)//需要重定向
+          if(type > 0)//需要重定向
           {
-            if(type == 0)//重定向输入
+            if(type & 0x1)//重定向输入
             {
-              int dpin = open(path.c_str(),  O_RDONLY);
+              std::cout << pathIn << std::endl;
+              int dpin = open(pathIn.c_str(),  O_RDONLY);
               if(dpin < 0)  
                 std::cout << "Redirection Error\n";
               else
@@ -187,9 +189,10 @@ int main() {
                 close(dpin);
               }
             }
-            else if(type == 1)//>
+            if(type & 0x2)//>
             {
-              int dpo = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
+              std::cout << pathOut << std::endl;
+              int dpo = open(pathOut.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0777);
               if(dpo < 0)  
                 std::cout << "Redirection Error\n";
               else
@@ -198,9 +201,10 @@ int main() {
                 close(dpo);
               }
             }
-            else//>>
+            if(type & 0x4)//>>
             {
-              int dpo = open(path.c_str(), O_APPEND | O_WRONLY);
+              std::cout << pathOut << std::endl;
+              int dpo = open(pathOut.c_str(), O_APPEND | O_WRONLY);
               if(dpo < 0)  
                 std::cout << "Redirection Error\n";
               else
@@ -275,13 +279,14 @@ int main() {
       }
       tcsetpgrp(0, getpgrp());
       std::vector<std::string> args;
-      std::string path;
+      std::string pathIn;
+      std::string pathOut;
       int type;
 
 
       for(int i = 0; i < cmdVector.size(); i++)
       {
-        divideCmd(cmdVector[i], args, path, type);
+        divideCmd(cmdVector[i], args, pathIn, pathOut, type);
         if(args[0] == "wait")
         {
           Wait();
@@ -410,8 +415,9 @@ int getLast(std::string cmd, int &type)//获得最后一个重定向符号的位
   return a;
 }
 
-void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &path, int &type)//分割一条命令，返回参数，重定向类型和路径（如果有的话）
+void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &pathIn, std::string &pathOut, int &type)//分割一条命令，返回参数，重定向类型和路径（如果有的话）
 {
+  type = 0;
   //裁一下两端空格
   cmd.erase(0,cmd.find_first_not_of(" "));
   cmd.erase(cmd.find_last_not_of(" ") + 1);
@@ -422,18 +428,55 @@ void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &pa
   if(firstPos >= 0 && firstPos < cmd.length())
   {
     tempStr = cmd.substr(0, firstPos);//截取除掉重定向部分之后的命令
-    auto lastPos = getLast(cmd, type);//只有最后一个重定向符号有效
-    path = cmd.substr(lastPos + 1, cmd.length() - lastPos - 1);
+    int inPos = cmd.find_last_of("<");
+    int outPos = cmd.find_last_of(">");
+    if(inPos >= 0 && inPos < cmd.length()-1)
+    {
+      type = type | 0x1;
+      int beginPos = cmd.find_first_not_of(" ", inPos+1);
+      int endPos = cmd.find_first_of("<> ", beginPos);
+      if(endPos >= 0 && endPos < cmd.length())
+        pathIn = cmd.substr(beginPos, endPos-beginPos);
+      else
+        pathIn = cmd.substr(beginPos);
+    }
+    else
+    {
+      pathIn = "";
+    }
+    if(outPos >= 0 && outPos < cmd.length())
+    {
+      if(outPos > 0 && cmd[outPos-1] == '>')
+      {
+        type = type | 0x4;
+      }
+      else
+      {
+        type = type | 0x2;
+      }
+      int beginPos = cmd.find_first_not_of(" ", outPos+1);
+      int endPos = cmd.find_first_of("<> ", beginPos);
+      if(endPos >= 0 && endPos < cmd.length())
+        pathOut = cmd.substr(beginPos, endPos-beginPos);
+      else
+        pathOut = cmd.substr(beginPos);
+    }
+    else
+    {
+      pathOut = "";
+    }
   }
   else
   {
     tempStr = cmd;
-    type = -1;
-    path = "";
+    pathIn = "";
+    pathOut = "";
   }
   //裁一下两端空格
-  path.erase(0,path.find_first_not_of(" "));
-  path.erase(path.find_last_not_of(" ") + 1);
+  pathIn.erase(0,pathIn.find_first_not_of(" "));
+  pathIn.erase(pathIn.find_last_not_of(" ") + 1);
+  pathOut.erase(0,pathOut.find_first_not_of(" "));
+  pathOut.erase(pathOut.find_last_not_of(" ") + 1);
   //裁一下两端空格
   tempStr.erase(0,tempStr.find_first_not_of(" "));
   tempStr.erase(tempStr.find_last_not_of(" ") + 1);
