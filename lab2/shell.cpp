@@ -30,6 +30,9 @@ int strlen(char * str, int size);
 void shellHandleSIGINT(int a);
 void Wait();
 
+//正在执行内建命令
+int builtInCmd = 0;
+
 int main() {
   // 不同步 iostream 和 cstdio 的 buffer
   std::ios::sync_with_stdio(false);
@@ -99,6 +102,8 @@ int main() {
     pid_t pid = fork();
     if(pid == 0)//子进程
     {
+      setpgid(getpid(), getpid());
+      tcsetpgrp(0, getpid());
       sigaction(SIGINT, &childSIGINT, NULL);
       signal(SIGTTOU, SIG_DFL);
 
@@ -116,8 +121,8 @@ int main() {
         umask(0);
         int fd0 = 0;
         signal(SIGPIPE, SIG_IGN);
-        setsid();
-        if((fd0 = open("/dev/null", O_RDWR)) != -1)
+        //setsid();
+        if((fd0 = open("/dev/null", O_RDWR)) != -1)//屏蔽输入输出
         {
           //std::cout << fd0 << std::endl;
           dup2(fd0, STDIN_FILENO);
@@ -267,13 +272,11 @@ int main() {
     }
     else//父进程
     {
-      if(backstage == 0)//不在后台运行才设置进程组
+      if(backstage == 0)//不在后台运行才wait
       {
-        setpgid(pid, pid);
-        tcsetpgrp(0, pid);
         int status = 0;
         waitpid(pid, &status, 0);//等待执行完毕
-        if(WIFSIGNALED(status))
+        if(WIFSIGNALED(status))//子进程被Ctrl C中断则换一行
           if(WTERMSIG(status) == SIGINT)
             std::cout << std::endl;
       }
@@ -283,7 +286,7 @@ int main() {
       std::string pathOut;
       int type;
 
-
+      builtInCmd = 1;
       for(int i = 0; i < cmdVector.size(); i++)
       {
         divideCmd(cmdVector[i], args, pathIn, pathOut, type);
@@ -391,6 +394,7 @@ int main() {
           std::cout << "终极无敌至尊非酋王" << std::endl;
           continue;
         }
+        builtInCmd = 0;
       }
     }
   }
@@ -520,15 +524,21 @@ void shellHandleSIGINT(int a)//shell中处理SIGINT
   int num = std::cin.rdbuf()->in_avail();
   std::cin.ignore(num);
   std::cin.clear();
-  std::cout << '\n';
-  char buf[256];
-  if(getcwd(buf, sizeof(buf)) == NULL)
-    ;
+  if(!builtInCmd)
+  {
+    std::cout << '\n';
+    char buf[256];
+    if(getcwd(buf, sizeof(buf)) == NULL)
+      ;
+    else
+      std::cout << buf;
+    std::cout << " $ ";
+    std::cout.flush();
+  }
   else
-    std::cout << buf;
-  std::cout << " $ ";
-  std::cout.flush();
-  //std::cout << "SIGINT" << std::endl;
+  {
+    std::cout << '\n';
+  }
 }
 
 void Wait()
