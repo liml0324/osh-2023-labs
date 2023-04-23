@@ -2,7 +2,7 @@
 PB21111639 李牧龙
 
 ### 运行说明：
-1. 该shell基于助教提供的框架编写（可能以及被魔改到看不出来了），Makefile即为助教提供的Makefile。将shell.cpp和Makefile放置在同一个路径下，即可用make编译，make clean清除编译。
+1. 该shell基于助教提供的框架编写（可能已经被魔改到看不出来了），Makefile即为助教提供的Makefile。将shell.cpp和Makefile放置在同一个路径下，即可用make编译，make clean清除编译。
 2. 由于只实现了后台命令和wait命令，未实现前后台切换，因此无法中止后台命令的运行。请不要尝试类似
 `ping baidu.com &`的命令。
 
