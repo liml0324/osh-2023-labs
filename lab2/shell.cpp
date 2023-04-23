@@ -64,12 +64,9 @@ int main() {
   int (*fd)[2];
 
   while (true) {
-    //perror("!");
     // 打印提示符
     if(nextHistory == 0)//执行新命令
     {
-      //获取方向键输入
-
       char buf[256];
       if(getcwd(buf, sizeof(buf)) == NULL)
         ;
@@ -121,7 +118,6 @@ int main() {
         umask(0);
         int fd0 = 0;
         signal(SIGPIPE, SIG_IGN);
-        //setsid();
         if((fd0 = open("/dev/null", O_RDWR)) != -1)//屏蔽输入输出
         {
           //std::cout << fd0 << std::endl;
@@ -147,7 +143,6 @@ int main() {
       for(int i = 0; i < cmdVector.size(); i++)
       {
         divideCmd(cmdVector[i], args, pathIn, pathOut, type);
-        //std::cout << "args[0] = " << args[0] << std::endl;
         pid_ = fork();
         if(pid_ == 0)
         {
@@ -209,7 +204,7 @@ int main() {
             if(type & 0x4)//>>
             {
               //std::cout << pathOut << std::endl;
-              int dpo = open(pathOut.c_str(), O_APPEND | O_WRONLY);
+              int dpo = open(pathOut.c_str(), O_CREAT | O_APPEND | O_WRONLY, 0777);
               if(dpo < 0)  
                 std::cout << "Redirection Error\n";
               else
@@ -265,7 +260,6 @@ int main() {
       }
       
       while(wait(NULL) >= 0);
-      //perror("?");
       if(cmdVector.size() > 1)
         free(fd);
       return 0;
@@ -416,19 +410,6 @@ std::vector<std::string> split(std::string s, const std::string &delimiter) {
   return res;
 }
 
-int getLast(std::string cmd, int &type)//获得最后一个重定向符号的位置，以及重定向类型
-{
-  auto a = cmd.find_last_of("<>");
-  if(a == -1) type = -1;
-  else if(cmd[a] == '<')  type = 0;//<
-  else if(cmd[a] == '>')  
-  {
-    if(a && cmd[a-1] == '>')  type = 2;//>>
-    else  type = 1;//>
-  }
-  return a;
-}
-
 void divideCmd(std::string &cmd, std::vector<std::string> &args, std::string &pathIn, std::string &pathOut, int &type)//分割一条命令，返回参数，重定向类型和路径（如果有的话）
 {
   type = 0;
@@ -520,7 +501,6 @@ int strlen(char * str, int size)
 
 void shellHandleSIGINT(int a)//shell中处理SIGINT
 {
-  //rst = 1;
   int num = std::cin.rdbuf()->in_avail();
   std::cin.ignore(num);
   std::cin.clear();
