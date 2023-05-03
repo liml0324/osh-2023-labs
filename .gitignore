@@ -4,3 +4,5 @@ lab2/*.o
 out
 out.txt
 test.cpp
+# lab3
+lab3/target
