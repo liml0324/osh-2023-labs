@@ -2,7 +2,7 @@ use std::{
     io, 
     io::{prelude::*, BufReader},
     fs,
-    net::{TcpListener, TcpStream}
+    net::{TcpListener, TcpStream},
 };
 
 fn main() {
@@ -31,12 +31,12 @@ fn main() {
     };
 
     for stream in listener.incoming() {
-        let mut stream = stream.unwrap();
-        handle_TcpStream(stream);
+        let stream = stream.unwrap();
+        handle_tcp_stream(stream);
     }
 }
 
-fn handle_TcpStream(mut stream: TcpStream){
+fn handle_tcp_stream(mut stream: TcpStream){
     let buf_reader = BufReader::new(& mut stream);
     let mut http_requests:Vec<String> = Vec::new();
     let buf_reader_lines = buf_reader.lines();
@@ -44,8 +44,7 @@ fn handle_TcpStream(mut stream: TcpStream){
         let new_line = match line {
             Ok(line) => line,
             Err(_) => {
-                let response = "HTTP/1.0 500 Internal Server Error \r\n\r\n";
-                stream.write_all(response.as_bytes()).unwrap();
+                handle_500(stream);
                 return;
             },
         };
@@ -60,23 +59,21 @@ fn handle_TcpStream(mut stream: TcpStream){
     let request_line = match request_line {
         Some(line) => line,
         None => {
-            let response = "HTTP/1.0 500 Internal Server Error \r\n\r\n";
-            stream.write_all(response.as_bytes()).unwrap();
+            handle_500(stream);
             return;
         },
     };
     let request_line = request_line.split(" ");
     let mut request_line_vec:Vec<&str> = Vec::new();
     for line in request_line {
-        let new_line = line.trim();
         if line.is_empty() {
             break;
         }
-        request_line_vec.push(line);
+        let new_line = line.trim();
+        request_line_vec.push(new_line);
     }
     if request_line_vec.len() != 3{
-        let response = "HTTP/1.0 500 Internal Server Error \r\n\r\n";
-        stream.write_all(response.as_bytes()).unwrap();
+        handle_500(stream);
         return;
     }
     
@@ -84,15 +81,13 @@ fn handle_TcpStream(mut stream: TcpStream){
     let method = match method {
         Some(method) => *method,
         None => {
-            let response = "HTTP/1.0 500 Internal Server Error \r\n\r\n";
-            stream.write_all(response.as_bytes()).unwrap();
+            handle_500(stream);
             return;
         },
     };
 
     if method != "GET" {
-        let response = "HTTP/1.0 500 Internal Server Error \r\n\r\n";
-        stream.write_all(response.as_bytes()).unwrap();
+        handle_500(stream);
         return;
     }
 
@@ -100,40 +95,60 @@ fn handle_TcpStream(mut stream: TcpStream){
     let mut path = match path {
         Some(path) => (*path).to_string(),
         None => {
-            let response = "HTTP/1.0 500 Internal Server Error \r\n\r\n";
-            stream.write_all(response.as_bytes()).unwrap();
+            handle_500(stream);
             return;
         },
     };
     path.remove(0);
-    println!("{path}");
 
     let last_dot_pos = path.rfind('.');
     let last_dot_pos = match last_dot_pos {
         Some(pos) => pos,
         None => path.len(),
     };
-    println!("{last_dot_pos}");
 
-    if last_dot_pos < path.len()-1 && path[last_dot_pos+1..].trim() == "html" {
+    if path.len() == 0 {
+        handle_404(stream);
+    }
+    else if last_dot_pos < path.len()-1 && 
+        (path[last_dot_pos+1..].trim() == "html" || path[last_dot_pos+1..].trim() == "txt") {
         let contents = fs::read_to_string(path);
         match contents {
             Ok(contents) => {
-                println!("OK");
                 let status_line = String::from("HTTP/1.0 200 OK");
                 let length = contents.len();
                 let response =
                     format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
                 stream.write_all(response.as_bytes()).unwrap();
+                println!("Respond: [\r\n{response}\r\n]");
             },
-            Err(_) => {
-                println!("Err");
-                let status_line = String::from("HTTP/1.0 404 NOT FOUND");
-                let response =
-                    format!("{status_line}\r\n\r\n");
-                stream.write_all(response.as_bytes()).unwrap();
+            Err(error) => {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    handle_404(stream);
+                    return;
+                }
+                else {
+                    handle_500(stream);
+                    return;
+                }
             },
         };
         
     }
+}
+
+fn handle_404(mut stream: TcpStream) {
+    let content = "404 NOT FOUND";
+    let response = format!("HTTP/1.0 404 NOT FOUND \r\nContent-Length: {}\r\n\r\n{}",
+        content.len(), content);
+    stream.write_all(response.as_bytes()).unwrap();
+    println!("Respond: [\r\n{response}\r\n]");
+}
+
+fn handle_500(mut stream: TcpStream) {
+    let content = "500 Internal Server Error";
+    let response = format!("HTTP/1.0 500 Internal Server Error \r\nContent-Length: {}\r\n\r\n{}",
+        content.len(), content);
+    stream.write_all(response.as_bytes()).unwrap();
+    println!("Respond: [\r\n{response}\r\n]");
 }
