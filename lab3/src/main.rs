@@ -107,11 +107,17 @@ fn handle_tcp_stream(mut stream: TcpStream){
         None => path.len(),
     };
 
+    let mut file_type = "";
+
+    if path.len() > 0 && last_dot_pos < path.len()-1 {
+        file_type = path[last_dot_pos+1..].trim();
+    }
+
     if path.len() == 0 {
         handle_404(stream);
     }
-    else if last_dot_pos < path.len()-1 && 
-        (path[last_dot_pos+1..].trim() == "html" || path[last_dot_pos+1..].trim() == "txt") {
+    else if last_dot_pos < path.len()-1 && file_type == "html" || file_type == "txt"
+        || file_type == "htm" || file_type == "css" || file_type == "js" {
         let contents = fs::read_to_string(path);
         match contents {
             Ok(contents) => {
@@ -122,7 +128,7 @@ fn handle_tcp_stream(mut stream: TcpStream){
                 stream.write_all(response.as_bytes()).unwrap();
                 println!("Respond: [\r\n{response}\r\n]");
             },
-            Err(error) => {
+            Err(error) => {//file not found
                 if error.kind() == std::io::ErrorKind::NotFound {
                     handle_404(stream);
                     return;
@@ -133,7 +139,30 @@ fn handle_tcp_stream(mut stream: TcpStream){
                 }
             },
         };
-        
+    }
+    else {
+        let contents = fs::read(path);
+        match contents {
+            Ok(contents) => {
+                let status_line = String::from("HTTP/1.0 200 OK");
+                let length = contents.len();
+                let response =
+                    format!("{status_line}\r\nContent-Length: {length}\r\n\r\n");
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.write_all(&contents).unwrap();
+                println!("Respond: [\r\n{response}\r\n]");
+            },
+            Err(error) => {//file not found
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    handle_404(stream);
+                    return;
+                }
+                else {
+                    handle_500(stream);
+                    return;
+                }
+            },
+        };
     }
 }
 

@@ -7,3 +7,7 @@ test.cpp
 # lab3
 lab3/target
 *.html
+*.webp
+*.png
+*.jpg
+hello
