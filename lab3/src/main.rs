@@ -38,8 +38,8 @@ fn main() {
 
 fn handle_tcp_stream(mut stream: TcpStream){
     let buf_reader = BufReader::new(& mut stream);
-    let mut http_requests:Vec<String> = Vec::new();
-    let buf_reader_lines = buf_reader.lines();
+    let mut http_request:Vec<String> = Vec::new();
+    let buf_reader_lines = buf_reader.lines();//read request
     for line in buf_reader_lines {
         let new_line = match line {
             Ok(line) => line,
@@ -51,11 +51,11 @@ fn handle_tcp_stream(mut stream: TcpStream){
         if new_line.is_empty() {
             break;
         }
-        http_requests.push(new_line);
+        http_request.push(new_line);//save request in vector
     }
-    println!("Request: {:#?}", http_requests);
+    println!("Request: {:#?}", http_request);
 
-    let request_line:Option<&String> = http_requests.get(0);
+    let request_line:Option<&String> = http_request.get(0);
     let request_line = match request_line {
         Some(line) => line,
         None => {
@@ -63,43 +63,56 @@ fn handle_tcp_stream(mut stream: TcpStream){
             return;
         },
     };
-    let request_line = request_line.split(" ");
-    let mut request_line_vec:Vec<&str> = Vec::new();
-    for line in request_line {
-        if line.is_empty() {
-            break;
-        }
-        let new_line = line.trim();
-        request_line_vec.push(new_line);
-    }
-    if request_line_vec.len() != 3{
+    // let request_line = request_line.split(" ");
+    // let mut request_line_vec:Vec<&str> = Vec::new();
+    // for line in request_line {
+    //     if line.is_empty() {
+    //         break;
+    //     }
+    //     let new_line = line.trim();
+    //     request_line_vec.push(new_line);
+    // }
+    // if request_line_vec.len() != 3{
+    //     handle_500(stream);
+    //     return;
+    // }
+    let request_line = request_line.trim();
+    let first_space_pos = request_line.find(' ');
+    let last_space_pos = request_line.rfind(' ');
+    let first_space_pos = match first_space_pos {
+        Some(pos) => pos,
+        None => request_line.len(),
+    };
+    let last_space_pos = match last_space_pos {
+        Some(pos) => pos,
+        None => request_line.len(),
+    };
+
+    if first_space_pos == request_line.len() || last_space_pos == request_line.len() {//incomplete request line
         handle_500(stream);
         return;
     }
     
-    let method = request_line_vec.get(0);
-    let method = match method {
-        Some(method) => *method,
-        None => {
-            handle_500(stream);
-            return;
-        },
-    };
+    let method = request_line[..first_space_pos].trim();
 
     if method != "GET" {
         handle_500(stream);
         return;
     }
 
-    let path = request_line_vec.get(1);
-    let mut path = match path {
-        Some(path) => (*path).to_string(),
-        None => {
-            handle_500(stream);
-            return;
-        },
-    };
-    path.remove(0);
+    let path = request_line[first_space_pos..last_space_pos].trim();
+    if path.len() == 0 {
+        handle_500(stream);
+        return;
+    }
+
+    let mut path = path.to_string();
+
+    if path[0..1].to_string() == "/" {
+        path.remove(0);
+    }
+
+    println!("Path: {}", path);
 
     let last_dot_pos = path.rfind('.');
     let last_dot_pos = match last_dot_pos {
