@@ -11,3 +11,5 @@ lab3/target
 *.png
 *.jpg
 hello
+# lab3_async
+lab3_async/target
