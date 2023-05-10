@@ -30,19 +30,24 @@ impl ThreadPool {
             let receiver = Arc::clone(&receiver);
             let thread = thread::spawn(move || loop {
                 let id = id;
-                let job = receiver
-                    .lock().expect("Thread failed to get lock.")
-                    .recv();
+                let job = receiver.lock();
                 match job {
-                    Ok(job) => {
-                        if debug {
-                            println!("Thread {} begin to handle request.", id);
+                    Ok(job) => match job.recv() {
+                        Ok(job) => {
+                            if debug {
+                                println!("Thread {} begin to handle request.", id);
+                            }
+                            job();
                         }
-                        job();
+                        Err(_) => {
+                            if debug {
+                                println!("Thread {} disconnected. Begin to shut down.", id);
+                            }
+                        }
                     }
                     Err(_) => {
                         if debug {
-                            println!("Thread {} disconnected. Begin to shut down.", id);
+                            println!("Thread {} failed to receive job.", id);
                         }
                     }
                 }
