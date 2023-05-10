@@ -1,9 +1,15 @@
 use std::{
-    io::{prelude::*, BufReader},
+    //io::{prelude::*, BufReader},
     fs,
-    net::{TcpListener, TcpStream},
-    env, process::exit,//fmt::{format, Debug},
+    env,//fmt::{format, Debug},
 };
+
+use async_std::{
+    net::{TcpListener, TcpStream},
+    prelude::*,
+};
+
+use futures::stream::StreamExt;
 
 #[async_std::main]
 async fn main() {
@@ -33,7 +39,7 @@ async fn main() {
     }
 
     let addr = format!("0.0.0.0:{}", port);
-    let listener = TcpListener::bind(addr);
+    let listener = TcpListener::bind(addr).await;
     let listener = match listener {
         Ok(listener) => {
             println!("Established listener successfully on 0.0.0.0:{}.", port);
@@ -62,31 +68,28 @@ async fn main() {
 }
 
 async fn handle_tcp_stream(mut stream: TcpStream, debug: bool){
-    let buf_reader = BufReader::new(& mut stream);
-    let mut http_request:Vec<String> = Vec::new();
-    let buf_reader_lines = buf_reader.lines();//read request
-    for line in buf_reader_lines {
-        let new_line = match line {
-            Ok(line) => line,
-            Err(_) => {
-                handle_500(stream, debug);
-                return;
-            },
-        };
-        if new_line.is_empty() {
+    let mut buffer = [0; 1024];
+    stream.read(&mut buffer).await.unwrap();
+
+    let http_request = String::from_utf8_lossy(&buffer[..]);
+    let http_request = http_request.into_owned();
+    let http_request_split = http_request.split("\r\n");
+    let mut http_request:Vec<&str> = Vec::new();
+    for line in http_request_split {
+        if line.is_empty() {
             break;
         }
-        http_request.push(new_line);//save request in vector
+        http_request.push(line);
     }
     if debug {
         println!("Request: {:#?}", http_request);
     }
 
-    let request_line:Option<&String> = http_request.get(0);
+    let request_line:Option<&&str> = http_request.get(0);
     let request_line = match request_line {
-        Some(line) => line,
+        Some(line) => *line,
         None => {
-            handle_500(stream, debug);
+            handle_500(stream, debug).await;
             return;
         },
     };
@@ -116,20 +119,20 @@ async fn handle_tcp_stream(mut stream: TcpStream, debug: bool){
     };
 
     if first_space_pos == request_line.len() || last_space_pos == request_line.len() {//incomplete request line
-        handle_500(stream, debug);
+        handle_500(stream, debug).await;
         return;
     }
     
     let method = request_line[..first_space_pos].trim();
 
     if method != "GET" {
-        handle_500(stream, debug);
+        handle_500(stream, debug).await;
         return;
     }
 
     let path = request_line[first_space_pos..last_space_pos].trim();
     if path.len() == 0 {
-        handle_500(stream, debug);
+        handle_500(stream, debug).await;
         return;
     }
 
@@ -156,22 +159,22 @@ async fn handle_tcp_stream(mut stream: TcpStream, debug: bool){
     }
 
     if path.len() == 0 {
-        handle_404(stream, debug);
+        handle_404(stream, debug).await;
     }
     else if last_dot_pos < path.len()-1 && file_type == "html" || file_type == "txt"
         || file_type == "htm" || file_type == "css" || file_type == "js" {
         let contents = fs::read_to_string(path);
         match contents {
             Ok(contents) => {
-                handle_200_string(stream, contents, debug);
+                handle_200_string(stream, contents, debug).await;
             },
             Err(error) => {//file not found
                 if error.kind() == std::io::ErrorKind::NotFound {
-                    handle_404(stream, debug);
+                    handle_404(stream, debug).await;
                     return;
                 }
                 else {
-                    handle_500(stream, debug);
+                    handle_500(stream, debug).await;
                     return;
                 }
             },
@@ -181,15 +184,15 @@ async fn handle_tcp_stream(mut stream: TcpStream, debug: bool){
         let contents = fs::read(path);
         match contents {
             Ok(contents) => {
-                handle_200_u8(stream, contents, debug);
+                handle_200_u8(stream, contents, debug).await;
             },
             Err(error) => {//file not found
                 if error.kind() == std::io::ErrorKind::NotFound {
-                    handle_404(stream, debug);
+                    handle_404(stream, debug).await;
                     return;
                 }
                 else {
-                    handle_500(stream, debug);
+                    handle_500(stream, debug).await;
                     return;
                 }
             },
