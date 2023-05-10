@@ -1,28 +1,56 @@
 use std::{
-    io, 
     io::{prelude::*, BufReader},
     fs,
-    net::{TcpListener, TcpStream}, vec,
-    thread,
-    sync::{mpsc::{self, Receiver}, Arc, Mutex},
-    env, fmt::{format, Debug},
+    net::{TcpListener, TcpStream},
+    thread::{self, JoinHandle},
+    sync::{mpsc, Arc, Mutex},
+    env,//fmt::{format, Debug},
 };
 
 struct ThreadPool {
-    workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    threads: Vec<Option<(usize, JoinHandle<()>)>>,
+    sender: Option<mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>>,
+    debug: bool,
 }
 
 impl ThreadPool {
-    fn new(size: usize) -> ThreadPool {
+    fn new(size: usize, debug: bool) -> ThreadPool {
         assert!(size > 0);//the other part of the program will grantee that size is greater than 0
-        let (sender, receiver) = mpsc::channel::<Job>();
+
+        let (sender, receiver) 
+            = mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
+
         let receiver = Arc::new(Mutex::new(receiver));
-        let mut workers = Vec::<Worker>::with_capacity(size);
+
+        let sender = Some(sender);
+
+        let mut threads = Vec::with_capacity(size);
+
         for id in 0..size {
-            workers.push(Worker::new(id, Arc::clone(&receiver)));
+            let receiver = Arc::clone(&receiver);
+            let thread = thread::spawn(move || loop {
+                let id = id;
+                let job = receiver
+                    .lock().expect("Thread failed to get lock.")
+                    .recv();
+                match job {
+                    Ok(job) => {
+                        if debug {
+                            println!("Thread {} begin to handle request.", id);
+                        }
+                        job();
+                    }
+                    Err(_) => {
+                        if debug {
+                            println!("Thread {} disconnected. Begin to shut down.", id);
+                        }
+                    }
+                }
+            });
+            threads.push(Some((id, thread)));
         }
-        ThreadPool { workers, sender }
+
+        ThreadPool { threads, sender, debug }
     }
 
     fn execute<F>(&self, f: F)
@@ -30,29 +58,48 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-        self.sender.send(job).expect("Thread pool failed to send job.");
+        match self.sender.as_ref() {
+            Some(sender) => {
+                match sender.send(job){
+                    Ok(_) => (),
+                    Err(_) => if self.debug {
+                        println!("Failed to send job.");
+                    }
+                }
+            }
+            None => {
+                if self.debug {
+                    println!("Could not find sender.");
+                }
+            }
+        }
     }
 }
 
-struct Worker {
-    id: usize,
-    thread: thread::JoinHandle<()>,
-}
-
-impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
-        let thread = thread::spawn(move || loop {
-            let job = receiver.lock().expect("Thread failed to get lock.").recv().expect("Thread failed to receive job.");
-            //println!("Worker {id} got a job; executing.");
-            job();
-        });
-        Worker { id, thread }
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        drop(self.sender.take());
+        for thread in &mut self.threads {
+            if let Some(thread) = thread.take(){
+                if self.debug {
+                    println!("Shutting down worker {}", thread.0);
+                }
+                let result = thread.1.join();
+                match result {
+                    Ok(_) => (),
+                    Err(_) => {
+                        if self.debug {
+                            println!("Failed to join thread {}", thread.0);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
-
-type Job = Box<dyn FnOnce() + Send + 'static>;
 
 fn main() {
+    const MAX_THREAD_NUM:usize = 20;
     let args:Vec<String> = env::args().collect();
     let mut debug = false;
     let mut thread_num = 4;
@@ -66,7 +113,19 @@ fn main() {
         else if args[i] == "-t" {
             if i+1 < args.len() {
                 thread_num = match args[i+1].parse::<usize>() {
-                    Ok(t) => t,
+                    Ok(t) => {
+                        if t <= 0 {
+                            println!("Invalid thread number, use 4 as default thread number.");
+                            4
+                        }
+                        else if t > MAX_THREAD_NUM {
+                            println!("Thread num is too big. Use 20 as max thread number.");
+                            20
+                        }
+                        else {
+                            t
+                        }
+                    }
                     Err(_) => {
                         println!("Invalid thread number, use 4 as default thread number.");
                         4
@@ -106,7 +165,7 @@ fn main() {
         }
     };
 
-    let thread_pool = ThreadPool::new(thread_num);
+    let thread_pool = ThreadPool::new(thread_num, debug);
 
     for stream in listener.incoming() {
         let stream = stream.unwrap();
@@ -256,7 +315,15 @@ fn handle_404(mut stream: TcpStream, debug: bool) {
     let content = "404 NOT FOUND";
     let response = format!("HTTP/1.0 404 NOT FOUND \r\nContent-Length: {}\r\n\r\n{}",
         content.len(), content);
-    stream.write_all(response.as_bytes());
+    let result = stream.write_all(response.as_bytes());
+    match result {
+        Ok(_) => (),
+        Err(_) => {
+            if debug { 
+                println!("failed to write to stream.");
+            }
+        }
+    }
     if debug {
         println!("Respond: [\r\n{response}\r\n]");
     }
@@ -266,7 +333,15 @@ fn handle_500(mut stream: TcpStream, debug: bool) {
     let content = "500 Internal Server Error";
     let response = format!("HTTP/1.0 500 Internal Server Error \r\nContent-Length: {}\r\n\r\n{}",
         content.len(), content);
-    stream.write_all(response.as_bytes());
+    let result = stream.write_all(response.as_bytes());
+    match result {
+        Ok(_) => (),
+        Err(_) => {
+            if debug { 
+                println!("failed to write to stream.");
+            }
+        }
+    }
     if debug {
         println!("Respond: [\r\n{response}\r\n]");
     }
@@ -277,8 +352,24 @@ fn handle_200_u8(mut stream: TcpStream, contents: Vec<u8>, debug: bool) {
     let length = contents.len();
     let response =
     format!("{status_line}\r\nContent-Length: {length}\r\n\r\n");
-    stream.write_all(response.as_bytes());
-    stream.write_all(&contents);
+    let result = stream.write_all(response.as_bytes());
+    match result {
+        Ok(_) => (),
+        Err(_) => {
+            if debug { 
+                println!("failed to write to stream.");
+            }
+        }
+    }
+    let result = stream.write_all(&contents);
+    match result {
+        Ok(_) => (),
+        Err(_) => {
+            if debug { 
+                println!("failed to write to stream.");
+            }
+        }
+    }
     if debug {
         println!("Respond: [\r\n{response}\r\n]");
     }
@@ -289,7 +380,15 @@ fn handle_200_string(mut stream: TcpStream, contents: String, debug: bool) {
     let length = contents.len();
     let response =
         format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
-    stream.write_all(response.as_bytes());
+    let result = stream.write_all(response.as_bytes());
+    match result {
+        Ok(_) => (),
+        Err(_) => {
+            if debug { 
+                println!("failed to write to stream.");
+            }
+        }
+    }
     if debug {
         println!("Respond: [\r\n{response}\r\n]");
     }
