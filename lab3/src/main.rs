@@ -173,10 +173,19 @@ fn main() {
     let thread_pool = ThreadPool::new(thread_num, debug);
 
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        thread_pool.execute(move || {
-            handle_tcp_stream(stream, debug);
-        });
+        match stream {
+            Ok(stream) => {
+                thread_pool.execute(move || {
+                    handle_tcp_stream(stream, debug);
+                });
+            }
+            Err(_) => {
+                if debug {
+                    println!("Failed to get stream.");
+                }
+            }
+        }
+        
     }
 }
 
