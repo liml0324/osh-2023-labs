@@ -2,10 +2,11 @@ use std::{
     io::{prelude::*, BufReader},
     fs,
     net::{TcpListener, TcpStream},
-    env,//fmt::{format, Debug},
+    env, process::exit,//fmt::{format, Debug},
 };
 
-fn main() {
+#[async_std::main]
+async fn main() {
     let args:Vec<String> = env::args().collect();
     let mut debug = false;
     let mut port = "8000";
@@ -43,22 +44,24 @@ fn main() {
         }
     };
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                handle_tcp_stream(stream, debug);
-            }
-            Err(_) => {
-                if debug {
-                    println!("Failed to get stream.");
+    listener
+        .incoming()
+        .for_each_concurrent(/* limit */ None, |stream| async move {
+            match stream {
+                Ok(stream) => {
+                    handle_tcp_stream(stream, debug).await;
+                }
+                Err(_) => {
+                    if debug {
+                        println!("Failed to get stream.");
+                    }
                 }
             }
-        }
-        
-    }
+        })
+        .await;
 }
 
-fn handle_tcp_stream(mut stream: TcpStream, debug: bool){
+async fn handle_tcp_stream(mut stream: TcpStream, debug: bool){
     let buf_reader = BufReader::new(& mut stream);
     let mut http_request:Vec<String> = Vec::new();
     let buf_reader_lines = buf_reader.lines();//read request
@@ -194,16 +197,25 @@ fn handle_tcp_stream(mut stream: TcpStream, debug: bool){
     }
 }
 
-fn handle_404(mut stream: TcpStream, debug: bool) {
+async fn handle_404(mut stream: TcpStream, debug: bool) {
     let content = "404 NOT FOUND";
     let response = format!("HTTP/1.0 404 NOT FOUND \r\nContent-Length: {}\r\n\r\n{}",
         content.len(), content);
-    let result = stream.write_all(response.as_bytes());
+    let result = stream.write_all(response.as_bytes()).await;
     match result {
-        Ok(_) => (),
+        Ok(_) => {
+            match stream.flush().await {
+                Ok(_) => (),
+                Err(_) => {
+                    if debug { 
+                        println!("Failed to flush stream.");
+                    }
+                }
+            }
+        }
         Err(_) => {
             if debug { 
-                println!("failed to write to stream.");
+                println!("Failed to write to stream.");
             }
         }
     }
@@ -212,16 +224,25 @@ fn handle_404(mut stream: TcpStream, debug: bool) {
     }
 }
 
-fn handle_500(mut stream: TcpStream, debug: bool) {
+async fn handle_500(mut stream: TcpStream, debug: bool) {
     let content = "500 Internal Server Error";
     let response = format!("HTTP/1.0 500 Internal Server Error \r\nContent-Length: {}\r\n\r\n{}",
         content.len(), content);
-    let result = stream.write_all(response.as_bytes());
+    let result = stream.write_all(response.as_bytes()).await;
     match result {
-        Ok(_) => (),
+        Ok(_) => {
+            match stream.flush().await {
+                Ok(_) => (),
+                Err(_) => {
+                    if debug { 
+                        println!("Failed to flush stream.");
+                    }
+                }
+            }
+        }
         Err(_) => {
             if debug { 
-                println!("failed to write to stream.");
+                println!("Failed to write to stream.");
             }
         }
     }
@@ -230,26 +251,44 @@ fn handle_500(mut stream: TcpStream, debug: bool) {
     }
 }
 
-fn handle_200_u8(mut stream: TcpStream, contents: Vec<u8>, debug: bool) {
+async fn handle_200_u8(mut stream: TcpStream, contents: Vec<u8>, debug: bool) {
     let status_line = String::from("HTTP/1.0 200 OK");
     let length = contents.len();
     let response =
     format!("{status_line}\r\nContent-Length: {length}\r\n\r\n");
-    let result = stream.write_all(response.as_bytes());
+    let result = stream.write_all(response.as_bytes()).await;
     match result {
-        Ok(_) => (),
+        Ok(_) => {
+            match stream.flush().await {
+                Ok(_) => (),
+                Err(_) => {
+                    if debug { 
+                        println!("Failed to flush stream.");
+                    }
+                }
+            }
+        }
         Err(_) => {
             if debug { 
-                println!("failed to write to stream.");
+                println!("Failed to write to stream.");
             }
         }
     }
-    let result = stream.write_all(&contents);
+    let result = stream.write_all(&contents).await;
     match result {
-        Ok(_) => (),
+        Ok(_) => {
+            match stream.flush().await {
+                Ok(_) => (),
+                Err(_) => {
+                    if debug { 
+                        println!("Failed to flush stream.");
+                    }
+                }
+            }
+        }
         Err(_) => {
             if debug { 
-                println!("failed to write to stream.");
+                println!("Failed to write to stream.");
             }
         }
     }
@@ -258,20 +297,29 @@ fn handle_200_u8(mut stream: TcpStream, contents: Vec<u8>, debug: bool) {
     }
 }
 
-fn handle_200_string(mut stream: TcpStream, contents: String, debug: bool) {
+async fn handle_200_string(mut stream: TcpStream, contents: String, debug: bool) {
     let status_line = String::from("HTTP/1.0 200 OK");
     let length = contents.len();
     let response =
         format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
-    let result = stream.write_all(response.as_bytes());
-    match result {
-        Ok(_) => (),
-        Err(_) => {
-            if debug { 
-                println!("failed to write to stream.");
+        let result = stream.write_all(response.as_bytes()).await;
+        match result {
+            Ok(_) => {
+                match stream.flush().await {
+                    Ok(_) => (),
+                    Err(_) => {
+                        if debug { 
+                            println!("Failed to flush stream.");
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                if debug { 
+                    println!("Failed to write to stream.");
+                }
             }
         }
-    }
     if debug {
         println!("Respond: [\r\n{response}\r\n]");
     }
