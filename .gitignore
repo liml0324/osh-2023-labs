@@ -6,6 +6,7 @@ out.txt
 test.cpp
 # lab3
 lab3/target
+!lab3/README_src/*.png
 *.html
 *.webp
 *.png
