@@ -130,16 +130,11 @@ async fn handle_tcp_stream(mut stream: TcpStream, debug: bool){
         return;
     }
 
-    let path = request_line[first_space_pos..last_space_pos].trim();
+    let path = request_line[first_space_pos..last_space_pos].trim().to_string();
+    let path = path.trim_matches('/').to_string();
     if path.len() == 0 {
         handle_500(stream, debug).await;
         return;
-    }
-
-    let mut path = path.to_string();
-
-    if path[0..1].to_string() == "/" {
-        path.remove(0);
     }
 
     if debug { 
