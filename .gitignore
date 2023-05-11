@@ -12,5 +12,6 @@ lab3/target
 *.jpg
 hello
 !/lab3/README_src/*
+test/
 # lab3_async
 lab3_async/target
