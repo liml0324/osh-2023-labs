@@ -2,13 +2,12 @@ use std::{
     io::{prelude::*, BufReader},
     fs,
     net::{TcpListener, TcpStream},
-    thread::{self, JoinHandle},
+    thread,
     sync::{mpsc, Arc, Mutex},
-    env,//fmt::{format, Debug},
+    env,
 };
 
 struct ThreadPool {
-    threads: Vec<Option<(usize, JoinHandle<()>)>>,
     sender: Option<mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>>,
     debug: bool,
 }
@@ -24,11 +23,9 @@ impl ThreadPool {
 
         let sender = Some(sender);
 
-        let mut threads = Vec::with_capacity(size);
-
         for id in 0..size {
             let receiver = Arc::clone(&receiver);
-            let thread = thread::spawn(move || loop {
+            thread::spawn(move || loop {
                 let id = id;
                 let job = receiver.lock();
                 match job {
@@ -41,7 +38,7 @@ impl ThreadPool {
                         }
                         Err(_) => {
                             if debug {
-                                println!("Thread {} disconnected. Begin to shut down.", id);
+                                println!("Thread {} disconnected.", id);
                             }
                         }
                     }
@@ -52,10 +49,9 @@ impl ThreadPool {
                     }
                 }
             });
-            threads.push(Some((id, thread)));
         }
 
-        ThreadPool { threads, sender, debug }
+        ThreadPool { sender, debug }
     }
 
     fn execute<F>(&self, f: F)
@@ -75,28 +71,6 @@ impl ThreadPool {
             None => {
                 if self.debug {
                     println!("Could not find sender.");
-                }
-            }
-        }
-    }
-}
-
-impl Drop for ThreadPool {
-    fn drop(&mut self) {
-        drop(self.sender.take());
-        for thread in &mut self.threads {
-            if let Some(thread) = thread.take(){
-                if self.debug {
-                    println!("Shutting down worker {}", thread.0);
-                }
-                let result = thread.1.join();
-                match result {
-                    Ok(_) => (),
-                    Err(_) => {
-                        if self.debug {
-                            println!("Failed to join thread {}", thread.0);
-                        }
-                    }
                 }
             }
         }
