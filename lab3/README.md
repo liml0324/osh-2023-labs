@@ -12,11 +12,13 @@
 在lab3文件夹下，输入`cargo build`或`cargo build --release`即可编译，或者通过`cargo run`或`cargo run --release`一步构建并运行。
 
 在启动时可以传递参数，用以修改线程数，端口等设置。支持的参数如下：
+
 |参数|功能|
 |-|-|
 |-d|使程序在控制台输出debug信息|
 |-t [num]|使用num个线程，默认为4，上限为20|
 |-p [port]|使用port作为端口，程序将监听0.0.0.0:port。默认为8000|
+
 运行示例：
 ![run.png](./README_src/run.png)
 
