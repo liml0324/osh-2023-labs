@@ -4,6 +4,8 @@
 ## 编译方法与运行说明：
 由于选做了异步I/O，因此在osh-2023-labs下有lab3和lab3_async两个文件夹。其中lab3是多线程（线程池）webserver，lab3_async是采用异步I/O的实现。lab3目录下的README_src是README文件的图片资源目录，请忽略该文件夹。
 
+另外，当文件不存在时，webserver除返回状态行：`HTTP/1.0 404 NOT FOUND`外，还将额外返回一个Content，内容为`404 NOT FOUND`，以便浏览器查看。需要返回`500 Internal Server Error`时同理。
+
 **两个webserver均需要使用Ctrl C结束运行。结束后bash中显示异常退出是正常现象。**
 
 ### 多线程webserver：
