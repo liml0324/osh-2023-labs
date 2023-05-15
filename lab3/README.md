@@ -2,9 +2,9 @@
 
 
 ## 编译方法与运行说明：
-由于选做了异步I/O，因此在osh-2023-labs下有lab3和lab3_async两个文件夹。其中lab3是多线程（线程池）webserver，lab3_async是采用异步I/O的实现。
+由于选做了异步I/O，因此在osh-2023-labs下有lab3和lab3_async两个文件夹。其中lab3是多线程（线程池）webserver，lab3_async是采用异步I/O的实现。lab3目录下的README_src是README文件的图片资源目录，请忽略该文件夹。
 
-**两个webserver均需要使用Ctrl C结束运行。**
+**两个webserver均需要使用Ctrl C结束运行。结束后bash中显示异常退出是正常现象。**
 
 ### 多线程webserver：
 在lab3文件夹下，输入`cargo build`或`cargo build --release`即可编译，或者通过`cargo run`或`cargo run --release`一步构建并运行。
