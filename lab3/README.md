@@ -6,6 +6,8 @@
 
 另外，当文件不存在时，webserver除返回状态行：`HTTP/1.0 404 NOT FOUND`外，还将额外返回一个Content，内容为`404 NOT FOUND`，以便浏览器查看。需要返回`500 Internal Server Error`时同理。
 
+程序运行的根目录是lab3(或lab3_async)，网页资源文件请放在该目录下。
+
 **两个webserver均需要使用Ctrl C结束运行。结束后bash中显示异常退出是正常现象。**
 
 ### 多线程webserver：
